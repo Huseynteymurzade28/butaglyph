@@ -46,6 +46,8 @@ fn run(argv: []const []const u8, cwd: ?[]const u8, env: Env) !Result {
         .argv = argv,
         .cwd = if (cwd) |c| .{ .path = c } else .inherit,
         .environ_map = &map,
+        // A hung child must fail the test, not hang the test runner.
+        .timeout = .{ .duration = .{ .raw = .fromSeconds(10), .clock = .awake } },
     });
     return .{ .stdout = r.stdout, .stderr = r.stderr, .code = switch (r.term) {
         .exited => |c| c,
@@ -281,4 +283,76 @@ test "ascii glyph set produces 7-bit output" {
     for (r.stdout) |c| try testing.expect(c < 0x80);
     var buf: [256]u8 = undefined;
     try testing.expectEqualStrings("git:main took 3.0s x 2 &2 > ", visible(r.stdout, &buf));
+}
+
+fn elapsedMs(start: std.Io.Clock.Timestamp) i64 {
+    return @intCast(@divTrunc(start.untilNow(io).raw.nanoseconds, std.time.ns_per_ms));
+}
+
+test "a module that misses its deadline is left out without delaying the prompt" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try makeFixture(&tmp);
+    defer gpa.free(root);
+
+    // A FIFO with no writer: open() blocks forever, like a hung network mount.
+    try tmp.dir.createDirPath(io, "slow/.git");
+    const fifo = try std.fs.path.join(gpa, &.{ root, "slow/.git/HEAD" });
+    defer gpa.free(fifo);
+    const mk = run(&.{ "mkfifo", fifo }, null, &.{}) catch return error.SkipZigTest;
+    defer mk.deinit();
+    if (mk.code != 0) return error.SkipZigTest;
+    const dir = try std.fs.path.join(gpa, &.{ root, "slow" });
+    defer gpa.free(dir);
+
+    const cases = [_]struct { config: []const u8, deadline_ms: i64 }{
+        .{ .config = ".{ .timeout_ms = 60 }", .deadline_ms = 60 },
+        // A module override beats the global value.
+        .{ .config = ".{ .timeout_ms = 5000, .git_branch = .{ .timeout_ms = 30 } }", .deadline_ms = 30 },
+    };
+    for (cases) |c| {
+        try tmp.dir.writeFile(io, .{ .sub_path = "t.zon", .data = c.config });
+        const cfg = try std.fs.path.join(gpa, &.{ root, "t.zon" });
+        defer gpa.free(cfg);
+
+        const start = std.Io.Clock.Timestamp.now(io, .awake);
+        const r = try run(&.{ try butaPath(), "prompt" }, dir, &.{ .{ "BUTA_CONFIG", cfg }, .{ "BUTA_DEBUG", "1" } });
+        defer r.deinit();
+        const took = elapsedMs(start);
+
+        try testing.expectEqual(@as(u8, 0), r.code);
+        var buf: [1024]u8 = undefined;
+        const shown = visible(r.stdout, &buf);
+        try testing.expect(std.mem.indexOf(u8, shown, "slow") != null); // other modules still render
+        try testing.expect(std.mem.indexOf(u8, shown, "\u{e0a0}") == null); // git_branch left out
+        try testing.expect(std.mem.indexOf(u8, r.stderr, "git_branch: missed its") != null);
+        // It waited for the deadline, and not much longer (generous slack for loaded CI machines).
+        if (took < c.deadline_ms or took > c.deadline_ms + 400) {
+            std.debug.print("deadline {d} ms, took {d} ms\n", .{ c.deadline_ms, took });
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
+test "fast modules finish well before the deadline" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try makeFixture(&tmp);
+    defer gpa.free(root);
+    try tmp.dir.createDirPath(io, "r/.git");
+    try tmp.dir.writeFile(io, .{ .sub_path = "r/.git/HEAD", .data = "ref: refs/heads/quick\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "t.zon", .data = ".{ .timeout_ms = 3000 }" });
+    const cfg = try std.fs.path.join(gpa, &.{ root, "t.zon" });
+    defer gpa.free(cfg);
+    const dir = try std.fs.path.join(gpa, &.{ root, "r" });
+    defer gpa.free(dir);
+
+    const start = std.Io.Clock.Timestamp.now(io, .awake);
+    const r = try run(&.{ try butaPath(), "prompt" }, dir, &.{.{ "BUTA_CONFIG", cfg }});
+    defer r.deinit();
+    const took = elapsedMs(start);
+    var buf: [1024]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, visible(r.stdout, &buf), "quick") != null);
+    // The deadline is an upper bound, not a wait: a 3 s budget must not cost 3 s.
+    try testing.expect(took < 1000);
 }

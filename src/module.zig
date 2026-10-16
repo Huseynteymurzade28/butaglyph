@@ -11,12 +11,15 @@
 //!   /// Pure function of its inputs: no I/O.
 //!   pub fn render(data: *const Data, cfg: *const Config, g: *const Glyphs, line: *Line) Line.Error!void;
 //!
+//! `expensive` modules must also have `timeout_ms: ?u32` in their Config.
+//!
 //! Computing and rendering are deliberately split. `Data` holds no pointers
-//! into the Context, so later phases can produce it elsewhere: on a worker
-//! thread with a deadline (Phase 1) or in the `butad` daemon, sent over a
+//! into the Context, so it can be produced elsewhere: on a worker thread with
+//! a deadline (Phase 1, `computeAll`) or in the `butad` daemon, sent over a
 //! socket (Phase 3). Rendering always happens in the client.
 
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Context = @import("context.zig").Context;
 const Config = @import("config.zig").Config;
@@ -33,8 +36,11 @@ pub const Id = enum {
     line_break,
 };
 
-/// How expensive `compute` is. `expensive` modules are the ones that get a
-/// deadline in Phase 1 and are served from the daemon cache in Phase 3.
+/// How expensive `compute` is.
+/// * `cheap`: no I/O, bounded CPU work on the Context. Runs inline on the
+///   main thread; dispatching it would cost more than computing it.
+/// * `expensive`: touches the filesystem (or, later, the network). Runs on a
+///   worker thread with a deadline, and is what the Phase 3 daemon caches.
 pub const Cost = enum { cheap, expensive };
 
 pub const impls = struct {
@@ -77,6 +83,8 @@ comptime {
         if (M.id != id) @compileError("module '" ++ f.name ++ "' declares the wrong id");
         if (@TypeOf(M.cost) != Cost) @compileError("module '" ++ f.name ++ "': cost must be a Cost");
         if (!@hasField(Config, f.name)) @compileError("Config has no section for module '" ++ f.name ++ "'");
+        if (M.cost == .expensive and !@hasField(M.Config, "timeout_ms"))
+            @compileError("expensive module '" ++ f.name ++ "' needs `timeout_ms: ?u32 = null` in its Config");
     }
 }
 
@@ -84,21 +92,111 @@ pub fn configFor(comptime id: Id, cfg: *const Config) *const Impl(id).Config {
     return &@field(cfg, @tagName(id));
 }
 
-/// Phase 0 driver: computes every module that appears in `cfg.order`,
-/// sequentially. Phase 1 replaces only this function (one task per module,
-/// a deadline per task, the slot stays null on timeout).
-pub fn computeAll(ctx: *const Context, cfg: *const Config, arena: Allocator, slots: *Slots) void {
+/// Bytes of private allocation space per module. Modules may run on
+/// different threads, so they never share an allocator.
+pub const heap_size = 16 * 1024;
+
+/// Everything a module task may touch after `computeAll` returns.
+///
+/// A task that misses its deadline is abandoned, not joined: it may be stuck
+/// in a syscall that cannot be interrupted (a hung network mount), and
+/// waiting for it would defeat the deadline. The prompt is printed and the
+/// process exits, which ends the straggler. Until then it may still write to
+/// its `Job` and heap, read the Context and Config, and use the Io instance,
+/// so all of those must live until process exit (see `prompt` in main.zig).
+pub const Runtime = struct {
+    jobs: [id_count]Job = @splat(.{}),
+    heaps: [id_count][heap_size]u8 = undefined,
+};
+
+const Job = struct {
+    result: ?Data = null,
+    /// Set (with release semantics) after `result` is written.
+    done: Io.Event = .unset,
+};
+
+/// Computes every module that appears in `cfg.order`, filling `slots`.
+/// Expensive modules run concurrently, each with a deadline of
+/// `timeout_ms` (module override, else the global one) from the call; a
+/// module that misses it gets a null slot. Cheap modules run inline
+/// meanwhile. Never blocks longer than the largest deadline.
+pub fn computeAll(ctx: *const Context, cfg: *const Config, rt: *Runtime, slots: *Slots) void {
+    const io = ctx.io;
+    const start = Io.Clock.Timestamp.now(io, .awake);
+    var launched: [id_count]bool = @splat(false);
+
+    // Launch expensive modules first so they overlap with everything else.
     inline for (@typeInfo(Id).@"enum".fields) |f| {
         const id: Id = @enumFromInt(f.value);
-        slots[f.value] = if (std.mem.indexOfScalar(Id, cfg.order, id) != null)
-            computeOne(id, ctx, cfg, arena)
-        else
-            null;
+        slots[f.value] = null;
+        if (Impl(id).cost == .expensive and inOrder(cfg, id)) {
+            const job = &rt.jobs[f.value];
+            const args = .{ job, ctx, cfg, heapFor(rt, id) };
+            if (io.concurrent(Task(id).run, args)) |_| {
+                launched[f.value] = true;
+            } else |_| {
+                // No concurrency available (e.g. thread spawn failed): run inline, without a deadline.
+                @call(.auto, Task(id).run, args);
+                slots[f.value] = job.result;
+            }
+        }
+    }
+
+    inline for (@typeInfo(Id).@"enum".fields) |f| {
+        const id: Id = @enumFromInt(f.value);
+        if (Impl(id).cost == .cheap and inOrder(cfg, id)) {
+            var fba: std.heap.FixedBufferAllocator = .init(&rt.heaps[f.value]);
+            slots[f.value] = computeOne(id, ctx, configFor(id, cfg), fba.allocator());
+        }
+    }
+
+    inline for (@typeInfo(Id).@"enum".fields) |f| {
+        const id: Id = @enumFromInt(f.value);
+        if (Impl(id).cost == .expensive) {
+            if (launched[f.value]) {
+                const timeout_ms = configFor(id, cfg).timeout_ms orelse cfg.timeout_ms;
+                const deadline = start.addDuration(.{ .raw = .fromMilliseconds(timeout_ms), .clock = .awake });
+                const job = &rt.jobs[f.value];
+                if (waitUntil(io, &job.done, deadline)) {
+                    slots[f.value] = job.result;
+                } else if (ctx.debug) {
+                    std.debug.print("buta: module {s}: missed its {d} ms deadline\n", .{ @tagName(id), timeout_ms });
+                }
+            }
+        }
     }
 }
 
-fn computeOne(comptime id: Id, ctx: *const Context, cfg: *const Config, arena: Allocator) ?Data {
-    const data = Impl(id).compute(ctx, configFor(id, cfg), arena) catch |err| {
+/// Waits for `event` until `deadline`. Returns whether it was set in time.
+fn waitUntil(io: Io, event: *Io.Event, deadline: Io.Clock.Timestamp) bool {
+    while (!event.isSet()) {
+        if (deadline.durationFromNow(io).raw.nanoseconds <= 0) return false;
+        // Timeout and spurious wakeups both land here; the loop re-checks.
+        event.waitTimeout(io, .{ .deadline = deadline }) catch {};
+    }
+    return true;
+}
+
+fn Task(comptime id: Id) type {
+    return struct {
+        fn run(job: *Job, ctx: *const Context, cfg: *const Config, heap: []u8) void {
+            var fba: std.heap.FixedBufferAllocator = .init(heap);
+            job.result = computeOne(id, ctx, configFor(id, cfg), fba.allocator());
+            job.done.set(ctx.io);
+        }
+    };
+}
+
+fn heapFor(rt: *Runtime, id: Id) []u8 {
+    return &rt.heaps[@intFromEnum(id)];
+}
+
+fn inOrder(cfg: *const Config, id: Id) bool {
+    return std.mem.indexOfScalar(Id, cfg.order, id) != null;
+}
+
+fn computeOne(comptime id: Id, ctx: *const Context, cfg: *const Impl(id).Config, arena: Allocator) ?Data {
+    const data = Impl(id).compute(ctx, cfg, arena) catch |err| {
         if (ctx.debug) std.debug.print("buta: module {s}: {s}\n", .{ @tagName(id), @errorName(err) });
         return null;
     } orelse return null;

@@ -15,15 +15,18 @@ const scripts = struct {
     const fish = @embedFile("shell/fish.sh");
 };
 
-/// All prompt-path allocations (config source, parsed config, module data)
-/// come from this buffer and are released together when the process exits.
-/// It lives in .bss: pages that are never touched cost nothing.
+/// Prompt-path allocations for the config (source and parsed values) come
+/// from this buffer; module data comes from per-module heaps in `runtime`.
+/// Everything is released together when the process exits. Both live in
+/// .bss: pages that are never touched cost nothing.
 var heap_buffer: [256 * 1024]u8 = undefined;
+var runtime: module.Runtime = undefined;
 
 pub fn main(init: std.process.Init.Minimal) u8 {
-    // Single-threaded Io: no thread pool is started. Phase 1 swaps this for a
-    // threaded implementation to run modules concurrently.
-    var threaded: Io.Threaded = .init_single_threaded;
+    // Worker threads are spawned on demand, only when an expensive module is
+    // configured. `threaded` is never deinitialized: that would join workers,
+    // and an abandoned module task must not be able to delay exit.
+    var threaded: Io.Threaded = .init(std.heap.page_allocator, .{ .stack_size = 1024 * 1024 });
     const io = threaded.io();
 
     var out_buf: [16 * 1024]u8 = undefined;
@@ -60,7 +63,10 @@ fn run(io: Io, environ: std.process.Environ, args: anytype, out: *Io.Writer, err
     return 0;
 }
 
-fn prompt(io: Io, environ: std.process.Environ, args: cli.PromptArgs, out: *Io.Writer, err: *Io.Writer) void {
+/// Never returns: module tasks that missed their deadline may still be
+/// running and reading `ctx`, `loaded` and the buffers in this frame, so the
+/// frame stays alive until the process exits right here.
+fn prompt(io: Io, environ: std.process.Environ, args: cli.PromptArgs, out: *Io.Writer, err: *Io.Writer) noreturn {
     var fba: std.heap.FixedBufferAllocator = .init(&heap_buffer);
     const arena = fba.allocator();
 
@@ -89,12 +95,16 @@ fn prompt(io: Io, environ: std.process.Environ, args: cli.PromptArgs, out: *Io.W
     if (loaded.problem) |msg| err.print("buta: {s}\nbuta: using the default configuration\n", .{msg}) catch {};
     const cfg = &loaded.config;
 
+    runtime.jobs = @splat(.{});
     var slots: module.Slots = undefined;
-    module.computeAll(&ctx, cfg, arena, &slots);
+    module.computeAll(&ctx, cfg, &runtime, &slots);
 
     var line: render.Line = .{};
     module.renderAll(&slots, cfg, glyphs.get(cfg.glyphs), &line);
     render.write(&line, ctx.shell, out) catch {};
+    out.flush() catch {};
+    err.flush() catch {};
+    std.process.exit(0);
 }
 
 const EnvLookup = struct {

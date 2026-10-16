@@ -72,6 +72,8 @@ config never costs you the prompt.
     // Modules in display order; modules left out are never computed.
     .order = .{ .dir, .git_branch, .duration, .status, .jobs, .line_break, .character },
     .separator = " ",
+    // Deadline for expensive modules (git), in ms from prompt start.
+    .timeout_ms = 100,
 
     // Colors: "red", "bright_cyan", "208" (256-color), "#7aa2f7" (truecolor).
     // Style flags: bold, dim, italic, underline. Background: .bg.
@@ -82,7 +84,7 @@ config never costs you the prompt.
         .abbrev_len = 1,  // ~/d/b/src: characters kept per directory
         .full_dirs = 2,   // trailing directories never abbreviated
     },
-    .git_branch = .{ .style = .{ .fg = "magenta" }, .symbol = "on ", .max_length = 32 },
+    .git_branch = .{ .style = .{ .fg = "magenta" }, .symbol = "on ", .max_length = 32, .timeout_ms = 50 },
     .status = .{ .style = .{ .fg = "red", .bold = true }, .signal_names = true },
     .duration = .{ .style = .{ .fg = "yellow" }, .min_ms = 2000 },
     .jobs = .{ .style = .{ .fg = "blue" } },
@@ -95,7 +97,7 @@ config never costs you the prompt.
 | Module       | Shows                                                         | Main options |
 |--------------|---------------------------------------------------------------|--------------|
 | `dir`        | Working directory, `$HOME` as `~`, fish-style abbreviation of long paths (UTF-8 aware) | `home_symbol`, `abbreviate`, `max_length`, `abbrev_len`, `full_dirs` |
-| `git_branch` | Branch from `.git/HEAD`, or the short hash when HEAD is detached. Works in subdirectories, worktrees and submodules (`.git` files with `gitdir:`) | `symbol`, `detached_symbol`, `hash_length`, `max_length` |
+| `git_branch` | Branch from `.git/HEAD`, or the short hash when HEAD is detached. Works in subdirectories, worktrees and submodules (`.git` files with `gitdir:`) | `symbol`, `detached_symbol`, `hash_length`, `max_length`, `timeout_ms` |
 | `status`     | The last exit code, if non-zero. `130` is shown as `INT`, and so on | `symbol`, `signal_names` |
 | `duration`   | How long the last command ran, if longer than `min_ms`        | `symbol`, `min_ms` |
 | `jobs`       | Number of background jobs. Not in the default order           | `symbol`, `min`, `count_from` |
@@ -105,12 +107,22 @@ config never costs you the prompt.
 Every module except `line_break` has a `style` (or `success_style`/`failure_style`) and a
 `symbol` override; leaving `symbol` unset uses the active glyph set.
 
-Set `BUTA_DEBUG=1` to have modules report their errors on stderr.
+Set `BUTA_DEBUG=1` to have modules report their errors and missed
+deadlines on stderr.
 
 ## Design
 
 * **The prompt never breaks.** If a module errors, it renders as empty and
   the rest of the prompt is drawn.
+* **The prompt is never slow.** Modules that touch the filesystem
+  (`expensive`: currently `git_branch`) run on worker threads, and each
+  one has a deadline (`timeout_ms`, 100 ms by default). A module that
+  misses its deadline is left out of that prompt. A late task is never
+  waited for: it may be stuck in a syscall that can't be interrupted (a hung
+  network mount, for example), so buta prints the prompt and exits, which
+  ends the task. `cheap` modules do no I/O and run inline on the main
+  thread, because dispatching them would cost more than computing them.
+  If no expensive module is configured, no thread is started.
 * **Computing and rendering are separate.** Each module's `compute`
   produces plain `Data` with no pointers into the process state. Its
   `render` is a pure function from `Data` to styled spans. Only
@@ -121,8 +133,10 @@ Set `BUTA_DEBUG=1` to have modules report their errors on stderr.
   branch names) is quoted for the target shell, so a directory named
   `$(rm -rf ~)` is displayed, never executed. Control characters are
   replaced. The test suite checks this against real bash, zsh and fish.
-* **Minimal allocation.** Every allocation on the prompt path comes from one
-  fixed buffer, and all of it is released together when the process exits.
+* **Minimal allocation.** Every allocation on the prompt path comes from
+  fixed buffers: one for the config, plus one per module so that modules on
+  different threads never share an allocator. All of it is released
+  together when the process exits.
   Output is written once, through a buffered writer.
 
 ```
@@ -150,19 +164,27 @@ zig build bench -- 5000
 tests/lineedit.sh bash   # interactive cursor check in tmux (also: zsh)
 ```
 
-On the development machine (Linux, x86-64), with the working directory
-inside a git repository and a full config file, the mean was **≈0.33 ms**
-and the p99 was **≈0.8 ms**, including fork/exec. The target is a mean
-under 2 ms.
+Measured on the development machine (Linux, x86-64) with a full config
+file, including fork/exec. The target is a mean under 2 ms.
+
+| Configuration                          | Mean    | p99     |
+|----------------------------------------|---------|---------|
+| Inside a git repo (one worker thread)  | ≈0.6 ms | ≈1.1 ms |
+| No expensive module (no thread)        | ≈0.33 ms | ≈0.8 ms |
+
+Almost all of the difference is the kernel cost of creating one thread
+(≈0.1 ms on this machine, measured with `std.Thread.spawn` on its own).
+Reading the git data takes ≈20 µs. The Phase 3 daemon removes the thread
+from the common path.
 
 ## Roadmap
 
-* **Phase 0 (current).** The CLI, the modules listed above, ZON config, glyph
+* **Phase 0 (done).** The CLI, the modules listed above, ZON config, glyph
   sets and the bash/zsh/fish integration.
-* **Phase 1: parallel modules with deadlines.** Modules run concurrently
-  through `std.Io`. Each module gets a deadline, and a module that misses
-  it renders as empty. Only `module.computeAll` changes; modules already
-  declare whether they are `cheap` or `expensive`.
+* **Phase 1 (done): parallel modules with deadlines.** Expensive modules
+  run concurrently through `std.Io`, each with its own deadline, and a
+  module that misses it renders as empty. Only `module.computeAll`
+  changed; the modules themselves did not.
 * **Phase 2: a native git reader.** No libgit2 and no shelling out to `git`.
   It will read HEAD, the index, loose objects, and packfiles with deltas,
   which enables dirty/ahead/behind status. This work grows under

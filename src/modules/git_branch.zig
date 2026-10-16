@@ -21,6 +21,8 @@ pub const Config = struct {
     /// Branch names longer than this are cut and end in `truncation_symbol`; 0 disables.
     max_length: u16 = 0,
     truncation_symbol: []const u8 = "…",
+    /// Overrides the global `timeout_ms` for this module.
+    timeout_ms: ?u32 = null,
 };
 
 pub const Data = struct { head: repo.Head };

@@ -16,6 +16,10 @@ pub const Config = struct {
     order: []const module.Id = &default_order,
     /// Inserted between two non-empty modules on the same line.
     separator: []const u8 = " ",
+    /// Deadline for expensive modules (git), in ms from prompt start. A
+    /// module that misses it is left out of this prompt. Modules can
+    /// override it with their own `timeout_ms`.
+    timeout_ms: u32 = 100,
 
     dir: m.dir.Config = .{},
     git_branch: m.git_branch.Config = .{},
@@ -97,6 +101,8 @@ test "empty config gives defaults" {
     try std.testing.expectEqual(glyphs.Set.nerd, r.config.glyphs);
     try std.testing.expectEqualSlices(module.Id, &default_order, r.config.order);
     try std.testing.expectEqual(@as(u64, 2000), r.config.duration.min_ms);
+    try std.testing.expectEqual(@as(u32, 100), r.config.timeout_ms);
+    try std.testing.expectEqual(@as(?u32, null), r.config.git_branch.timeout_ms);
 }
 
 test "config overrides order, glyphs, colors and symbols" {
@@ -108,7 +114,8 @@ test "config overrides order, glyphs, colors and symbols" {
         \\    .order = .{ .git_branch, .dir, .character },
         \\    .separator = " | ",
         \\    .dir = .{ .style = .{ .fg = "#ff8800", .bold = false }, .max_length = 0 },
-        \\    .git_branch = .{ .symbol = "on " },
+        \\    .git_branch = .{ .symbol = "on ", .timeout_ms = 10 },
+        \\    .timeout_ms = 40,
         \\    .duration = .{ .min_ms = 500 },
         \\    .character = .{ .success_symbol = "$" },
         \\}
@@ -122,6 +129,8 @@ test "config overrides order, glyphs, colors and symbols" {
     try std.testing.expect(!c.dir.style.bold);
     try std.testing.expectEqual(@as(u16, 0), c.dir.max_length);
     try std.testing.expectEqualStrings("on ", c.git_branch.symbol.?);
+    try std.testing.expectEqual(@as(u32, 40), c.timeout_ms);
+    try std.testing.expectEqual(@as(?u32, 10), c.git_branch.timeout_ms);
     try std.testing.expectEqual(@as(u64, 500), c.duration.min_ms);
     try std.testing.expectEqualStrings("$", c.character.success_symbol.?);
     // Untouched sections keep their defaults.
