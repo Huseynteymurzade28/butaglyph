@@ -24,8 +24,9 @@ zig build -Doptimize=ReleaseFast
 install -Dm755 zig-out/bin/buta ~/.local/bin/buta
 ```
 
-The default glyph set needs a [Nerd Font](https://www.nerdfonts.com). If you
-don't have one, set `.glyphs = .ascii` (see below).
+The default glyph set needs a [Nerd Font](https://www.nerdfonts.com) and a
+UTF-8 locale (otherwise the shell measures the glyphs in bytes, not columns,
+and the cursor drifts). Without either, set `.glyphs = .ascii` (see below).
 
 ## Shell setup
 
@@ -146,6 +147,7 @@ bench/bench.zig        prompt latency benchmark
 zig build test    # unit + integration tests (shell tests run for installed shells)
 zig build bench   # 1000 × `buta prompt` in ReleaseFast: mean / p50 / p99
 zig build bench -- 5000
+tests/lineedit.sh bash   # interactive cursor check in tmux (also: zsh)
 ```
 
 On the development machine (Linux, x86-64), with the working directory
