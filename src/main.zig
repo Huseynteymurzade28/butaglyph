@@ -162,6 +162,5 @@ test {
     _ = glyphs;
     _ = module;
     _ = render;
-    _ = @import("git/repo.zig");
     inline for (@typeInfo(module.impls).@"struct".decls) |d| _ = @field(module.impls, d.name);
 }

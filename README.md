@@ -4,7 +4,7 @@ A fast, shell-agnostic prompt engine written in Zig, in the spirit of
 Starship and Oh My Posh. The command is `buta`.
 
 ```
-~/dev/butaglyph  master  2.3s  1
+~/dev/butaglyph  main +1 !2 ⇡3  2.3s  1
 ❯
 ```
 
@@ -70,7 +70,7 @@ config never costs you the prompt.
     // .nerd (default, needs a Nerd Font) or .ascii
     .glyphs = .nerd,
     // Modules in display order; modules left out are never computed.
-    .order = .{ .dir, .git_branch, .duration, .status, .jobs, .line_break, .character },
+    .order = .{ .dir, .git_branch, .git_status, .duration, .status, .jobs, .line_break, .character },
     .separator = " ",
     // Deadline for expensive modules (git), in ms from prompt start.
     .timeout_ms = 100,
@@ -85,6 +85,7 @@ config never costs you the prompt.
         .full_dirs = 2,   // trailing directories never abbreviated
     },
     .git_branch = .{ .style = .{ .fg = "magenta" }, .symbol = "on ", .max_length = 32, .timeout_ms = 50 },
+    .git_status = .{ .style = .{ .fg = "red" }, .show_counts = true, .ahead_behind = true },
     .status = .{ .style = .{ .fg = "red", .bold = true }, .signal_names = true },
     .duration = .{ .style = .{ .fg = "yellow" }, .min_ms = 2000 },
     .jobs = .{ .style = .{ .fg = "blue" } },
@@ -98,6 +99,7 @@ config never costs you the prompt.
 |--------------|---------------------------------------------------------------|--------------|
 | `dir`        | Working directory, `$HOME` as `~`, fish-style abbreviation of long paths (UTF-8 aware) | `home_symbol`, `abbreviate`, `max_length`, `abbrev_len`, `full_dirs` |
 | `git_branch` | Branch from `.git/HEAD`, or the short hash when HEAD is detached. Works in subdirectories, worktrees and submodules (`.git` files with `gitdir:`) | `symbol`, `detached_symbol`, `hash_length`, `max_length`, `timeout_ms` |
+| `git_status` | Staged (`+`), modified (`!`), deleted (`✘`) and conflicted (`=`) paths, and commits ahead of (`⇡`) and behind (`⇣`) the upstream. Hidden when the tree is clean and in sync | `*_symbol`, `show_counts`, `ahead_behind`, `worktree`, `timeout_ms` |
 | `status`     | The last exit code, if non-zero. `130` is shown as `INT`, and so on | `symbol`, `signal_names` |
 | `duration`   | How long the last command ran, if longer than `min_ms`        | `symbol`, `min_ms` |
 | `jobs`       | Number of background jobs. Not in the default order           | `symbol`, `min`, `count_from` |
@@ -129,6 +131,18 @@ deadlines on stderr.
   `src/render.zig` knows about escape sequences.
 * **Correct line editing.** Escape sequences are wrapped as zero-width
   (`\[ \]` in bash, `%{ %}` in zsh), so long input lines wrap correctly.
+* **git without git.** `src/git/` reads repositories directly, with no
+  libgit2 and no `git` subprocess. It handles `.git` files (worktrees and
+  submodules), `commondir`, loose and packed refs, loose objects, and
+  packfiles with OFS and REF deltas (memory-mapped `.idx`/`.pack`). It also
+  reads the index (v2–v4, using the cache-tree extension to skip unchanged
+  directories). Working-tree checks use `lstat`, and fall back to hashing
+  the content when the stat data is inconclusive or "racy", as git does;
+  large indexes are checked on several threads. Ahead/behind uses git's
+  date-ordered merge-base paint. The test suite compares every result with
+  the real `git status` and `git rev-list` on generated repositories, and
+  checks that every object in loose, OFS-delta and REF-delta packs hashes
+  back to its id.
 * **Paths can't inject commands.** Text from the filesystem (directory and
   branch names) is quoted for the target shell, so a directory named
   `$(rm -rf ~)` is displayed, never executed. Control characters are
@@ -148,10 +162,19 @@ src/
   config.zig         ZON config loading
   glyphs.zig         Nerd Font and ASCII glyph sets
   render.zig         spans, ANSI, per-shell wrapping and quoting
-  git/repo.zig       repository discovery and HEAD parsing
+  git/               the git reader (its own module, imported as "git")
+    repo.zig         discovery, worktrees (.git files, commondir), HEAD
+    refs.zig         loose refs, packed-refs, symbolic refs
+    odb.zig          loose objects, packfiles, delta chains
+    delta.zig        git's binary delta format
+    object.zig       commit and tree parsing
+    index.zig        index v2-v4 and the cache-tree extension
+    config.zig       a small git-config reader
+    status.zig       staged/modified/deleted/conflicted, ahead/behind
   modules/*.zig      one file per module
   shell/*.sh         init scripts (embedded with @embedFile)
 tests/integration.zig  drives the real binary and real shells
+tests/git_compat.zig   compares the git reader with the real git CLI
 bench/bench.zig        prompt latency benchmark
 ```
 
@@ -167,15 +190,17 @@ tests/lineedit.sh bash   # interactive cursor check in tmux (also: zsh)
 Measured on the development machine (Linux, x86-64) with a full config
 file, including fork/exec. The target is a mean under 2 ms.
 
-| Configuration                          | Mean    | p99     |
-|----------------------------------------|---------|---------|
-| Inside a git repo (one worker thread)  | ≈0.6 ms | ≈1.1 ms |
-| No expensive module (no thread)        | ≈0.33 ms | ≈0.8 ms |
+| Configuration                                      | Mean     | p99     |
+|----------------------------------------------------|----------|---------|
+| Default modules in this repo (git branch + status) | ≈0.78 ms | ≈1.4 ms |
+| No expensive module (no thread)                    | ≈0.33 ms | ≈0.8 ms |
 
-Almost all of the difference is the kernel cost of creating one thread
-(≈0.1 ms on this machine, measured with `std.Thread.spawn` on its own).
-Reading the git data takes ≈20 µs. The Phase 3 daemon removes the thread
-from the common path.
+Each worker thread costs ≈0.1 ms on this machine; that is the kernel cost
+of creating it, measured with `std.Thread.spawn` on its own. `git_status`
+grows with the number of tracked files, mostly because of one `lstat` per
+file. Best-of-15 wall time with `git_status` was ≈3.1 ms on a 2.9k-file repo
+and ≈4.1 ms on a 5.4k-file repo; `git status -uno` took 60–95 ms on the same
+repos. The Phase 3 daemon will serve this from a cache.
 
 ## Roadmap
 
@@ -185,10 +210,17 @@ from the common path.
   run concurrently through `std.Io`, each with its own deadline, and a
   module that misses it renders as empty. Only `module.computeAll`
   changed; the modules themselves did not.
-* **Phase 2: a native git reader.** No libgit2 and no shelling out to `git`.
-  It will read HEAD, the index, loose objects, and packfiles with deltas,
-  which enables dirty/ahead/behind status. This work grows under
-  `src/git/`.
+* **Phase 2 (done): a native git reader.** HEAD, refs, the index, loose
+  objects, packfiles and deltas, all without libgit2 or `git`. This powers
+  `git_status`. Known gaps:
+  * untracked files are not reported (planned with the daemon, which can
+    keep the ignore rules and directory state warm);
+  * rename detection is not done, so a rename counts as a deletion plus an
+    addition, as with `git status --no-renames`;
+  * clean/smudge filters (autocrlf, LFS) are not applied;
+  * not supported: SHA-256 repositories, reftable, split or sparse
+    indexes, and object alternates. In any of these cases the module
+    renders as empty.
 * **Phase 3: a daemon.** `butad` runs in the background, caches expensive
   module data and watches for changes with inotify (kqueue on macOS). `buta`
   asks it over a Unix socket and falls back to computing directly when the

@@ -10,8 +10,12 @@ const Allocator = std.mem.Allocator;
 
 pub const Repo = struct {
     /// The repository's git dir: `<work_tree>/.git`, or the target of a
-    /// `.git` file's `gitdir:` line (worktrees, submodules).
+    /// `.git` file's `gitdir:` line (worktrees, submodules). Holds HEAD and
+    /// the index.
     git_dir: []const u8,
+    /// Where objects, shared refs and config live. Equal to `git_dir`
+    /// except in linked worktrees, where `<git_dir>/commondir` points to it.
+    common_dir: []const u8,
     work_tree: []const u8,
 };
 
@@ -33,21 +37,16 @@ pub fn discover(io: Io, arena: Allocator, start: []const u8) !?Repo {
     while (true) {
         const dot_git = std.fmt.bufPrint(&buf, "{s}/.git", .{dir}) catch return error.NameTooLong;
         if (Io.Dir.cwd().statFile(io, dot_git, .{})) |stat| switch (stat.kind) {
-            .directory => return .{
-                .git_dir = try arena.dupe(u8, dot_git),
-                .work_tree = try arena.dupe(u8, if (dir.len == 0) "/" else dir),
-            },
+            .directory => return try finish(io, arena, try arena.dupe(u8, dot_git), dir),
             .file => {
                 var file_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
                 const contents = try Io.Dir.cwd().readFile(io, dot_git, &file_buf);
                 const target = try parseGitFile(contents);
-                return .{
-                    .git_dir = if (std.fs.path.isAbsolute(target))
-                        try arena.dupe(u8, target)
-                    else
-                        try std.fmt.allocPrint(arena, "{s}/{s}", .{ dir, target }),
-                    .work_tree = try arena.dupe(u8, if (dir.len == 0) "/" else dir),
-                };
+                const git_dir = if (std.fs.path.isAbsolute(target))
+                    try arena.dupe(u8, target)
+                else
+                    try std.fmt.allocPrint(arena, "{s}/{s}", .{ dir, target });
+                return try finish(io, arena, git_dir, dir);
             },
             else => {},
         } else |err| switch (err) {
@@ -57,6 +56,25 @@ pub fn discover(io: Io, arena: Allocator, start: []const u8) !?Repo {
         if (dir.len == 0) return null;
         dir = dir[0 .. std.mem.lastIndexOfScalar(u8, dir, '/') orelse return null];
     }
+}
+
+fn finish(io: Io, arena: Allocator, git_dir: []const u8, dir: []const u8) !Repo {
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var content_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const commondir_path = std.fmt.bufPrint(&path_buf, "{s}/commondir", .{git_dir}) catch return error.NameTooLong;
+    const common_dir: []const u8 = if (Io.Dir.cwd().readFile(io, commondir_path, &content_buf)) |raw| blk: {
+        const target = std.mem.trimEnd(u8, raw, " \t\r\n");
+        if (target.len == 0) break :blk git_dir;
+        break :blk if (std.fs.path.isAbsolute(target))
+            try arena.dupe(u8, target)
+        else
+            try std.fmt.allocPrint(arena, "{s}/{s}", .{ git_dir, target });
+    } else |_| git_dir;
+    return .{
+        .git_dir = git_dir,
+        .common_dir = common_dir,
+        .work_tree = try arena.dupe(u8, if (dir.len == 0) "/" else dir),
+    };
 }
 
 pub fn readHead(io: Io, arena: Allocator, repo: Repo) !Head {

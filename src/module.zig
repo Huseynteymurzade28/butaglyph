@@ -29,6 +29,7 @@ const Line = @import("render.zig").Line;
 pub const Id = enum {
     dir,
     git_branch,
+    git_status,
     status,
     duration,
     character,
@@ -46,6 +47,7 @@ pub const Cost = enum { cheap, expensive };
 pub const impls = struct {
     pub const dir = @import("modules/dir.zig");
     pub const git_branch = @import("modules/git_branch.zig");
+    pub const git_status = @import("modules/git_status.zig");
     pub const status = @import("modules/status.zig");
     pub const duration = @import("modules/duration.zig");
     pub const character = @import("modules/character.zig");
@@ -60,6 +62,7 @@ pub fn Impl(comptime id: Id) type {
 pub const Data = union(Id) {
     dir: impls.dir.Data,
     git_branch: impls.git_branch.Data,
+    git_status: impls.git_status.Data,
     status: impls.status.Data,
     duration: impls.duration.Data,
     character: impls.character.Data,
@@ -92,11 +95,15 @@ pub fn configFor(comptime id: Id, cfg: *const Config) *const Impl(id).Config {
     return &@field(cfg, @tagName(id));
 }
 
-/// Bytes of private allocation space per module. Modules may run on
-/// different threads, so they never share an allocator.
+/// Bytes of private allocation space per cheap module. Modules may run on
+/// different threads, so they never share an allocator. Expensive modules
+/// (whose memory needs grow with the repository) get their own arena on
+/// the page allocator instead; like everything else it is released when
+/// the process exits.
 pub const heap_size = 16 * 1024;
 
-/// Everything a module task may touch after `computeAll` returns.
+/// Everything a module task may touch after `computeAll` returns (plus its
+/// own arena, see `Task`).
 ///
 /// A task that misses its deadline is abandoned, not joined: it may be stuck
 /// in a syscall that cannot be interrupted (a hung network mount), and
@@ -131,7 +138,7 @@ pub fn computeAll(ctx: *const Context, cfg: *const Config, rt: *Runtime, slots: 
         slots[f.value] = null;
         if (Impl(id).cost == .expensive and inOrder(cfg, id)) {
             const job = &rt.jobs[f.value];
-            const args = .{ job, ctx, cfg, heapFor(rt, id) };
+            const args = .{ job, ctx, cfg };
             if (io.concurrent(Task(id).run, args)) |_| {
                 launched[f.value] = true;
             } else |_| {
@@ -179,16 +186,14 @@ fn waitUntil(io: Io, event: *Io.Event, deadline: Io.Clock.Timestamp) bool {
 
 fn Task(comptime id: Id) type {
     return struct {
-        fn run(job: *Job, ctx: *const Context, cfg: *const Config, heap: []u8) void {
-            var fba: std.heap.FixedBufferAllocator = .init(heap);
-            job.result = computeOne(id, ctx, configFor(id, cfg), fba.allocator());
+        fn run(job: *Job, ctx: *const Context, cfg: *const Config) void {
+            var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+            // Not deinitialized: the result points into it, and a straggler
+            // must never free memory the main thread might be reading.
+            job.result = computeOne(id, ctx, configFor(id, cfg), arena.allocator());
             job.done.set(ctx.io);
         }
     };
-}
-
-fn heapFor(rt: *Runtime, id: Id) []u8 {
-    return &rt.heaps[@intFromEnum(id)];
 }
 
 fn inOrder(cfg: *const Config, id: Id) bool {

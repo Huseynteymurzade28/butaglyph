@@ -23,6 +23,7 @@ pub const Config = struct {
 
     dir: m.dir.Config = .{},
     git_branch: m.git_branch.Config = .{},
+    git_status: m.git_status.Config = .{},
     status: m.status.Config = .{},
     duration: m.duration.Config = .{},
     character: m.character.Config = .{},
@@ -30,7 +31,7 @@ pub const Config = struct {
     line_break: m.line_break.Config = .{},
 };
 
-pub const default_order = [_]module.Id{ .dir, .git_branch, .duration, .status, .jobs, .line_break, .character };
+pub const default_order = [_]module.Id{ .dir, .git_branch, .git_status, .duration, .status, .jobs, .line_break, .character };
 
 /// Largest config file we accept; larger files are reported and ignored.
 const max_file_size = 64 * 1024;

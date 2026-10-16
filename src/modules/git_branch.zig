@@ -7,7 +7,7 @@ const Context = @import("../context.zig").Context;
 const Glyphs = @import("../glyphs.zig").Glyphs;
 const render_mod = @import("../render.zig");
 const Line = render_mod.Line;
-const repo = @import("../git/repo.zig");
+const repo = @import("git").repo;
 
 pub const id: module.Id = .git_branch;
 pub const cost: module.Cost = .expensive;

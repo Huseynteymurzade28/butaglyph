@@ -308,7 +308,7 @@ test "a module that misses its deadline is left out without delaying the prompt"
     const cases = [_]struct { config: []const u8, deadline_ms: i64 }{
         .{ .config = ".{ .timeout_ms = 60 }", .deadline_ms = 60 },
         // A module override beats the global value.
-        .{ .config = ".{ .timeout_ms = 5000, .git_branch = .{ .timeout_ms = 30 } }", .deadline_ms = 30 },
+        .{ .config = ".{ .timeout_ms = 5000, .git_branch = .{ .timeout_ms = 30 }, .git_status = .{ .timeout_ms = 20 } }", .deadline_ms = 30 },
     };
     for (cases) |c| {
         try tmp.dir.writeFile(io, .{ .sub_path = "t.zon", .data = c.config });
@@ -326,6 +326,7 @@ test "a module that misses its deadline is left out without delaying the prompt"
         try testing.expect(std.mem.indexOf(u8, shown, "slow") != null); // other modules still render
         try testing.expect(std.mem.indexOf(u8, shown, "\u{e0a0}") == null); // git_branch left out
         try testing.expect(std.mem.indexOf(u8, r.stderr, "git_branch: missed its") != null);
+        try testing.expect(std.mem.indexOf(u8, r.stderr, "git_status: missed its") != null);
         // It waited for the deadline, and not much longer (generous slack for loaded CI machines).
         if (took < c.deadline_ms or took > c.deadline_ms + 400) {
             std.debug.print("deadline {d} ms, took {d} ms\n", .{ c.deadline_ms, took });

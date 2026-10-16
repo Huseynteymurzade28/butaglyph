@@ -7,6 +7,12 @@ pub const Set = enum { nerd, ascii };
 pub const Glyphs = struct {
     git_branch: []const u8,
     git_detached: []const u8,
+    git_staged: []const u8,
+    git_modified: []const u8,
+    git_deleted: []const u8,
+    git_conflicted: []const u8,
+    git_ahead: []const u8,
+    git_behind: []const u8,
     status: []const u8,
     duration: []const u8,
     jobs: []const u8,
@@ -18,6 +24,12 @@ pub const Glyphs = struct {
 pub const nerd: Glyphs = .{
     .git_branch = "\u{e0a0} ", // nf-pl-branch
     .git_detached = "\u{f417} ", // nf-oct-git_commit
+    .git_staged = "+",
+    .git_modified = "!",
+    .git_deleted = "\u{2718}", // ✘
+    .git_conflicted = "=",
+    .git_ahead = "\u{21e1}", // ⇡
+    .git_behind = "\u{21e3}", // ⇣
     .status = "\u{f00d} ", // nf-fa-xmark
     .duration = "\u{f252} ", // nf-fa-hourglass_half
     .jobs = "\u{f013} ", // nf-fa-gear
@@ -29,6 +41,12 @@ pub const nerd: Glyphs = .{
 pub const ascii: Glyphs = .{
     .git_branch = "git:",
     .git_detached = "git:@",
+    .git_staged = "+",
+    .git_modified = "!",
+    .git_deleted = "-",
+    .git_conflicted = "=",
+    .git_ahead = "^",
+    .git_behind = "v",
     .status = "x ",
     .duration = "took ",
     .jobs = "&",
