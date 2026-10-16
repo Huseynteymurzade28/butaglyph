@@ -11,6 +11,7 @@ const repo = @import("git").repo;
 
 pub const id: module.Id = .git_branch;
 pub const cost: module.Cost = .expensive;
+pub const scope: module.Scope = .repo;
 
 pub const Config = struct {
     style: render_mod.Style = .{ .fg = "magenta", .bold = true },

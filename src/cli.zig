@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const Shell = @import("render.zig").Shell;
+const daemon = @import("daemon.zig");
 
 pub const InitShell = enum { bash, zsh, fish };
 
@@ -17,11 +18,12 @@ pub const PromptArgs = struct {
 pub const Command = union(enum) {
     prompt: PromptArgs,
     init: InitShell,
+    daemon: daemon.Options,
     version,
     help,
 };
 
-pub const Error = error{ UnknownCommand, MissingShell, InvalidShell, UnexpectedArgument };
+pub const Error = error{ UnknownCommand, MissingShell, InvalidShell, UnexpectedArgument, InvalidDaemonArgument };
 
 pub const usage =
     \\Usage:
@@ -31,6 +33,9 @@ pub const usage =
     \\      --status <int>           Exit status of the last command
     \\      --duration-ms <int>      Duration of the last command
     \\      --jobs <int>             Number of background jobs
+    \\  buta daemon [--detach]       Run the cache daemon (in the background with --detach)
+    \\  buta daemon status           Show whether it runs, and its cache statistics
+    \\  buta daemon stop             Stop it
     \\  buta --version
     \\  buta --help
     \\
@@ -51,6 +56,18 @@ pub fn parse(args: anytype) Error!Command {
         return .{ .init = shell };
     }
     if (eql(cmd, "prompt")) return .{ .prompt = parsePrompt(args) };
+    if (eql(cmd, "daemon")) {
+        var opts: daemon.Options = .{};
+        while (args.next()) |arg| {
+            if (eql(arg, "--detach")) {
+                opts.detach = true;
+            } else if (std.meta.stringToEnum(daemon.Action, arg)) |action| {
+                opts.action = action;
+            } else return error.InvalidDaemonArgument;
+        }
+        if (opts.detach and opts.action != .run) return error.InvalidDaemonArgument;
+        return .{ .daemon = opts };
+    }
     return error.UnknownCommand;
 }
 
@@ -115,4 +132,13 @@ test "init and meta commands" {
     try std.testing.expectError(error.UnknownCommand, testParse(&.{"bogus"}));
     try std.testing.expectEqual(Command.version, try testParse(&.{"--version"}));
     try std.testing.expectEqual(Command.help, try testParse(&.{}));
+}
+
+test "daemon commands" {
+    try std.testing.expectEqual(Command{ .daemon = .{} }, try testParse(&.{"daemon"}));
+    try std.testing.expectEqual(Command{ .daemon = .{ .detach = true } }, try testParse(&.{ "daemon", "--detach" }));
+    try std.testing.expectEqual(Command{ .daemon = .{ .action = .stop } }, try testParse(&.{ "daemon", "stop" }));
+    try std.testing.expectEqual(Command{ .daemon = .{ .action = .status } }, try testParse(&.{ "daemon", "status" }));
+    try std.testing.expectError(error.InvalidDaemonArgument, testParse(&.{ "daemon", "restart" }));
+    try std.testing.expectError(error.InvalidDaemonArgument, testParse(&.{ "daemon", "stop", "--detach" }));
 }

@@ -55,6 +55,17 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(integration_tests).step);
 
+    // Runs the real daemon and checks its answers against local computation.
+    const daemon_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/daemon.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "build_options", .module = it_options.createModule() }},
+        }),
+    });
+    test_step.dependOn(&b.addRunArtifact(daemon_tests).step);
+
     // The benchmark always measures a ReleaseFast binary, whatever -Doptimize says.
     const fast_git = b.createModule(.{
         .root_source_file = b.path("src/git/git.zig"),

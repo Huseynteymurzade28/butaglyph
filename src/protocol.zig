@@ -1,0 +1,144 @@
+//! What `buta prompt` and `buta daemon` say to each other over a Unix
+//! socket.
+//!
+//! The client sends one request:
+//!
+//!   "BUTA"  fingerprint: u64  length: u32  wire(Request)
+//!
+//! For a `prompt` request the daemon answers with one frame per requested
+//! module, in whatever order results become ready (cache hits first):
+//!
+//!   length: u32  wire(Frame)
+//!
+//! and then closes the connection. A daemon whose fingerprint differs (it
+//! was built from other sources) closes the connection without answering,
+//! and the client computes everything itself. Integers in the header are
+//! little-endian.
+
+const std = @import("std");
+const builtin = @import("builtin");
+const module = @import("module.zig");
+const wire = @import("wire.zig");
+
+pub const magic = "BUTA";
+pub const header_len = magic.len + 8 + 4;
+/// Largest request or frame either side accepts.
+pub const max_message = 1024 * 1024;
+
+pub const Request = union(enum) {
+    prompt: Prompt,
+    status,
+    stop,
+};
+
+pub const Prompt = struct {
+    /// Physical working directory of the shell.
+    cwd: []const u8,
+    debug: bool,
+    modules: []const ModuleRequest,
+};
+
+pub const ModuleRequest = struct {
+    id: module.Id,
+    /// wire(Impl(id).Config): the client's configuration for the module.
+    config: []const u8,
+};
+
+pub const Frame = struct {
+    id: module.Id,
+    /// wire(Impl(id).Data), or null when the module renders nothing.
+    data: ?[]const u8,
+};
+
+pub const Status = struct {
+    pid: i32,
+    uptime_s: u64,
+    repos: u32,
+    watches: u32,
+    hits: u64,
+    misses: u64,
+};
+
+/// Changes whenever anything that crosses the socket changes shape: the
+/// messages above, or the Config or Data of a module the daemon serves.
+pub const fingerprint: u64 = blk: {
+    var h = std.hash.Wyhash.init(0);
+    for ([_]u64{ wire.fingerprint(Request), wire.fingerprint(Frame), wire.fingerprint(Status) }) |f| {
+        h.update(std.mem.asBytes(&f));
+    }
+    for (@typeInfo(module.Id).@"enum".fields) |f| {
+        const M = module.Impl(@enumFromInt(f.value));
+        if (module.scopeOf(M) == .repo) {
+            h.update(f.name);
+            h.update(std.mem.asBytes(&wire.fingerprint(M.Config)));
+            h.update(std.mem.asBytes(&wire.fingerprint(M.Data)));
+        }
+    }
+    break :blk h.final();
+};
+
+/// The daemon is Linux-only for now (it relies on inotify).
+pub const supported = builtin.os.tag == .linux;
+
+/// `$BUTA_SOCKET` if set (empty disables the daemon), else
+/// `$XDG_RUNTIME_DIR/butaglyph.sock`. Without either there is no daemon:
+/// XDG_RUNTIME_DIR is private to the user, while a socket in a shared
+/// directory such as /tmp would need more care than it is worth.
+pub fn socketPath(buf: *[std.Io.net.UnixAddress.max_len]u8, getenv: anytype) ?[:0]const u8 {
+    if (!supported) return null;
+    if (getenv.get("BUTA_SOCKET")) |p| {
+        if (p.len == 0) return null;
+        return std.fmt.bufPrintSentinel(buf, "{s}", .{p}, 0) catch null;
+    }
+    const dir = getenv.get("XDG_RUNTIME_DIR") orelse return null;
+    if (dir.len == 0 or dir[0] != '/') return null;
+    return std.fmt.bufPrintSentinel(buf, "{s}/butaglyph.sock", .{dir}, 0) catch null;
+}
+
+pub fn writeHeader(w: *std.Io.Writer, payload_len: usize) std.Io.Writer.Error!void {
+    try w.writeAll(magic);
+    try w.writeInt(u64, fingerprint, .little);
+    try w.writeInt(u32, @intCast(payload_len), .little);
+}
+
+pub const HeaderError = error{ BadMagic, FingerprintMismatch, MessageTooLarge };
+
+/// Checks a request header and returns the payload length.
+pub fn parseHeader(h: *const [header_len]u8) HeaderError!u32 {
+    if (!std.mem.eql(u8, h[0..magic.len], magic)) return error.BadMagic;
+    if (std.mem.readInt(u64, h[magic.len..][0..8], .little) != fingerprint) return error.FingerprintMismatch;
+    const len = std.mem.readInt(u32, h[magic.len + 8 ..][0..4], .little);
+    if (len > max_message) return error.MessageTooLarge;
+    return len;
+}
+
+const TestEnv = struct {
+    map: []const [2][]const u8,
+    pub fn get(e: TestEnv, k: []const u8) ?[]const u8 {
+        for (e.map) |kv| if (std.mem.eql(u8, kv[0], k)) return kv[1];
+        return null;
+    }
+};
+
+test socketPath {
+    if (!supported) return error.SkipZigTest;
+    var buf: [std.Io.net.UnixAddress.max_len]u8 = undefined;
+    try std.testing.expectEqualStrings("/s.sock", socketPath(&buf, TestEnv{ .map = &.{ .{ "BUTA_SOCKET", "/s.sock" }, .{ "XDG_RUNTIME_DIR", "/run/user/1" } } }).?);
+    try std.testing.expectEqualStrings("/run/user/1/butaglyph.sock", socketPath(&buf, TestEnv{ .map = &.{.{ "XDG_RUNTIME_DIR", "/run/user/1" }} }).?);
+    try std.testing.expectEqual(null, socketPath(&buf, TestEnv{ .map = &.{ .{ "BUTA_SOCKET", "" }, .{ "XDG_RUNTIME_DIR", "/run/user/1" } } }));
+    try std.testing.expectEqual(null, socketPath(&buf, TestEnv{ .map = &.{.{ "XDG_RUNTIME_DIR", "rel" }} }));
+    try std.testing.expectEqual(null, socketPath(&buf, TestEnv{ .map = &.{} }));
+    const long = "/" ++ "x" ** 120;
+    try std.testing.expectEqual(null, socketPath(&buf, TestEnv{ .map = &.{.{ "BUTA_SOCKET", long }} }));
+}
+
+test parseHeader {
+    var buf: [header_len]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try writeHeader(&w, 42);
+    try std.testing.expectEqual(@as(u32, 42), try parseHeader(&buf));
+    buf[magic.len] ^= 1;
+    try std.testing.expectError(error.FingerprintMismatch, parseHeader(&buf));
+    buf[0] = 'X';
+    try std.testing.expectError(error.BadMagic, parseHeader(&buf));
+}

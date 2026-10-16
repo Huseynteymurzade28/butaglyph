@@ -51,6 +51,7 @@ pub fn compute(io: Io, arena: Allocator, repo: Repo, opts: Options) !Status {
     }
 
     var odb = try odb_mod.Odb.open(io, arena, try std.fmt.allocPrint(arena, "{s}/objects", .{repo.common_dir}));
+    defer odb.close();
     const head = try refs.resolve(io, repo, "HEAD");
     const loaded = try loadIndex(io, arena, repo);
 

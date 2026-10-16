@@ -5,6 +5,7 @@ const build_options = @import("build_options");
 const cli = @import("cli.zig");
 const config = @import("config.zig");
 const context = @import("context.zig");
+const daemon = @import("daemon.zig");
 const glyphs = @import("glyphs.zig");
 const module = @import("module.zig");
 const render = @import("render.zig");
@@ -51,6 +52,7 @@ fn run(io: Io, environ: std.process.Environ, args: anytype, out: *Io.Writer, err
             error.MissingShell => "init: missing shell name",
             error.InvalidShell => "init: unsupported shell (expected bash, zsh or fish)",
             error.UnexpectedArgument => "init: unexpected argument",
+            error.InvalidDaemonArgument => "daemon: expected `--detach`, `status` or `stop`",
         }, cli.usage });
         return 2;
     };
@@ -59,6 +61,7 @@ fn run(io: Io, environ: std.process.Environ, args: anytype, out: *Io.Writer, err
         .help => try out.writeAll(cli.usage),
         .init => |shell| try writeInit(io, shell, out),
         .prompt => |p| prompt(io, environ, p, out, err),
+        .daemon => |opts| return daemon.main(environ, opts, out, err),
     }
     return 0;
 }
@@ -159,7 +162,11 @@ test {
     _ = cli;
     _ = config;
     _ = context;
+    _ = daemon;
     _ = glyphs;
+    _ = @import("client.zig");
+    _ = @import("protocol.zig");
+    _ = @import("wire.zig");
     _ = module;
     _ = render;
     inline for (@typeInfo(module.impls).@"struct".decls) |d| _ = @field(module.impls, d.name);

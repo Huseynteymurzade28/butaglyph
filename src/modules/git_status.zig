@@ -12,6 +12,7 @@ const Line = render_mod.Line;
 
 pub const id: module.Id = .git_status;
 pub const cost: module.Cost = .expensive;
+pub const scope: module.Scope = .repo;
 
 pub const Config = struct {
     style: render_mod.Style = .{ .fg = "red", .bold = true },

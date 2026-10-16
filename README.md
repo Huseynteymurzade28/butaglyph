@@ -112,6 +112,65 @@ Every module except `line_break` has a `style` (or `success_style`/`failure_styl
 Set `BUTA_DEBUG=1` to have modules report their errors and missed
 deadlines on stderr.
 
+## The daemon
+
+`buta daemon` keeps the git modules' results in memory and refreshes them
+only when something in the repository changes, so a prompt in a large
+repository costs about as much as one anywhere else. It is optional:
+without it, `buta prompt` computes everything itself, exactly as before.
+
+```sh
+buta daemon --detach   # start it in the background
+buta daemon status     # pid, cached repositories, watches, hits and misses
+buta daemon stop
+```
+
+`buta daemon` without `--detach` stays in the foreground, which suits a
+systemd user service (`~/.config/systemd/user/buta.service`, then
+`systemctl --user enable --now buta`):
+
+```ini
+[Unit]
+Description=butaglyph prompt cache
+
+[Service]
+ExecStart=%h/.local/bin/buta daemon
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+The socket is `$XDG_RUNTIME_DIR/butaglyph.sock`, or `$BUTA_SOCKET` if
+set (an empty `BUTA_SOCKET` turns the daemon off for that shell). Without
+`XDG_RUNTIME_DIR` there is no daemon. The daemon needs Linux (inotify).
+
+Restart the daemon after upgrading buta (`buta daemon stop`, then start it
+again). Until then the new `buta prompt` notices that the daemon was built
+from different sources and computes everything itself.
+
+* **Never stale.** A cached result is used only if inotify has reported
+  no change in the repository since it was computed. The kernel queues an
+  event before the syscall that caused it returns, and the daemon reads
+  the queue before every lookup, so a command that has finished is always
+  reflected in the next prompt. The test suite runs a long sequence of git
+  operations (commits, stashes, branch switches, worktrees, `pack-refs`,
+  moved directories, rapid same-size rewrites) and checks every prompt the
+  daemon serves against a local computation.
+* **Watches only what matters.** HEAD, the index, config, packed-refs,
+  everything under `refs/`, and the work tree directories that hold
+  tracked files. Directories with no tracked files (build output,
+  `node_modules`) are not watched, so churn there costs nothing. If
+  inotify runs out of watches (`fs.inotify.max_user_watches`), that
+  repository is simply not cached.
+* **Never slower than its deadline.** The prompt sends its request
+  before computing the cheap modules and waits for each answer only until
+  that module's deadline. No daemon, a refused connection or a daemon from
+  another build means computing locally; a daemon that hangs up early
+  means computing locally whatever it didn't answer.
+* **Private.** The daemon answers only processes of its own user and in
+  its own mount namespace (a shell in a container computes locally).
+
 ## Design
 
 * **The prompt never breaks.** If a module errors, it renders as empty and
@@ -128,7 +187,12 @@ deadlines on stderr.
 * **Computing and rendering are separate.** Each module's `compute`
   produces plain `Data` with no pointers into the process state. Its
   `render` is a pure function from `Data` to styled spans. Only
-  `src/render.zig` knows about escape sequences.
+  `src/render.zig` knows about escape sequences. That is what lets the
+  daemon compute `Data` in another process: modules that declare
+  `scope = .repo` (their result depends only on the repository and their
+  config) are served by it, and a module's `Config` and `Data` cross the
+  socket through a small generic codec (`src/wire.zig`). Client and
+  daemon compare a hash of all those types' shapes before talking.
 * **Correct line editing.** Escape sequences are wrapped as zero-width
   (`\[ \]` in bash, `%{ %}` in zsh), so long input lines wrap correctly.
 * **git without git.** `src/git/` reads repositories directly, with no
@@ -155,8 +219,12 @@ deadlines on stderr.
 
 ```
 src/
-  main.zig           entry point, `init` and `prompt` commands
+  main.zig           entry point, `init`, `prompt` and `daemon` commands
   cli.zig            argument parsing (lenient for `prompt`)
+  daemon.zig         the cache daemon: socket, inotify watches, cache
+  client.zig         the prompt's side of the daemon protocol
+  protocol.zig       messages, socket path, protocol fingerprint
+  wire.zig           binary codec for module Config and Data
   context.zig        shared read-only input: cwd, env, status, duration, jobs
   module.zig         module interface, registry, compute/render drivers
   config.zig         ZON config loading
@@ -175,6 +243,7 @@ src/
   shell/*.sh         init scripts (embedded with @embedFile)
 tests/integration.zig  drives the real binary and real shells
 tests/git_compat.zig   compares the git reader with the real git CLI
+tests/daemon.zig       checks the daemon's answers against local computation
 bench/bench.zig        prompt latency benchmark
 ```
 
@@ -200,7 +269,14 @@ of creating it, measured with `std.Thread.spawn` on its own. `git_status`
 grows with the number of tracked files, mostly because of one `lstat` per
 file. Best-of-15 wall time with `git_status` was ≈3.1 ms on a 2.9k-file repo
 and ≈4.1 ms on a 5.4k-file repo; `git status -uno` took 60–95 ms on the same
-repos. The Phase 3 daemon will serve this from a cache.
+repos.
+
+With the daemon running, a cache hit is one round trip over the socket and
+starts no thread. In one 2000-run benchmark in this repository (with a
+dirty work tree), `buta prompt` took 0.08 ms more than `/bin/true` with the
+daemon and 0.98 ms more without it. The cost no longer grows with the
+repository; after a change, the first prompt pays for one recomputation in
+the daemon.
 
 ## Roadmap
 
@@ -213,7 +289,7 @@ repos. The Phase 3 daemon will serve this from a cache.
 * **Phase 2 (done): a native git reader.** HEAD, refs, the index, loose
   objects, packfiles and deltas, all without libgit2 or `git`. This powers
   `git_status`. Known gaps:
-  * untracked files are not reported (planned with the daemon, which can
+  * untracked files are not reported (next on the list: the daemon can
     keep the ignore rules and directory state warm);
   * rename detection is not done, so a rename counts as a deletion plus an
     addition, as with `git status --no-renames`;
@@ -221,7 +297,9 @@ repos. The Phase 3 daemon will serve this from a cache.
   * not supported: SHA-256 repositories, reftable, split or sparse
     indexes, and object alternates. In any of these cases the module
     renders as empty.
-* **Phase 3: a daemon.** `butad` runs in the background, caches expensive
-  module data and watches for changes with inotify (kqueue on macOS). `buta`
-  asks it over a Unix socket and falls back to computing directly when the
-  daemon isn't running. Module `Data` is already plain, serializable values.
+* **Phase 3 (done): a daemon.** `buta daemon` caches the git modules'
+  data and watches repositories with inotify. `buta prompt` asks it over a
+  Unix socket and computes directly when it isn't running. It is a
+  subcommand rather than a separate `butad` binary, so client and daemon
+  always come from the same build. Not done yet: kqueue (macOS), and
+  starting the daemon automatically from the shell hooks.

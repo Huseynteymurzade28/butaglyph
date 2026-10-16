@@ -11,12 +11,17 @@
 //!   /// Pure function of its inputs: no I/O.
 //!   pub fn render(data: *const Data, cfg: *const Config, g: *const Glyphs, line: *Line) Line.Error!void;
 //!
-//! `expensive` modules must also have `timeout_ms: ?u32` in their Config.
+//! `expensive` modules must also have `timeout_ms: ?u32` in their Config,
+//! and may declare
+//!
+//!   pub const scope: Scope = .repo;
+//!
+//! to have the daemon compute and cache them (see `Scope`).
 //!
 //! Computing and rendering are deliberately split. `Data` holds no pointers
 //! into the Context, so it can be produced elsewhere: on a worker thread with
-//! a deadline (Phase 1, `computeAll`) or in the `butad` daemon, sent over a
-//! socket (Phase 3). Rendering always happens in the client.
+//! a deadline (`computeAll`) or in the daemon, sent over a socket
+//! (src/daemon.zig, src/client.zig). Rendering always happens in the client.
 
 const std = @import("std");
 const Io = std.Io;
@@ -25,6 +30,7 @@ const Context = @import("context.zig").Context;
 const Config = @import("config.zig").Config;
 const Glyphs = @import("glyphs.zig").Glyphs;
 const Line = @import("render.zig").Line;
+const client = @import("client.zig");
 
 pub const Id = enum {
     dir,
@@ -43,6 +49,22 @@ pub const Id = enum {
 /// * `expensive`: touches the filesystem (or, later, the network). Runs on a
 ///   worker thread with a deadline, and is what the Phase 3 daemon caches.
 pub const Cost = enum { cheap, expensive };
+
+/// What an expensive module's result depends on, which decides whether the
+/// daemon may serve it from its cache.
+/// * `local` (the default): anything in the Context. Always computed by
+///   the client.
+/// * `repo`: only the git repository containing `ctx.physical_cwd` (its
+///   work tree, index, HEAD, refs and config) and the module's Config. The
+///   daemon computes it with a Context that has only `io`, `cwd`,
+///   `physical_cwd` and `debug` filled in, and keeps the result until
+///   inotify reports a change in that repository. Its Config and Data must
+///   be encodable by src/wire.zig.
+pub const Scope = enum { local, repo };
+
+pub fn scopeOf(comptime M: type) Scope {
+    return if (@hasDecl(M, "scope")) M.scope else .local;
+}
 
 pub const impls = struct {
     pub const dir = @import("modules/dir.zig");
@@ -88,6 +110,8 @@ comptime {
         if (!@hasField(Config, f.name)) @compileError("Config has no section for module '" ++ f.name ++ "'");
         if (M.cost == .expensive and !@hasField(M.Config, "timeout_ms"))
             @compileError("expensive module '" ++ f.name ++ "' needs `timeout_ms: ?u32 = null` in its Config");
+        if (scopeOf(M) != .local and M.cost != .expensive)
+            @compileError("module '" ++ f.name ++ "': only expensive modules can have a scope");
     }
 }
 
@@ -125,27 +149,24 @@ const Job = struct {
 /// Computes every module that appears in `cfg.order`, filling `slots`.
 /// Expensive modules run concurrently, each with a deadline of
 /// `timeout_ms` (module override, else the global one) from the call; a
-/// module that misses it gets a null slot. Cheap modules run inline
+/// module that misses it gets a null slot. Repo-scoped modules are asked
+/// of the daemon when one is running, and computed here when it is not (or
+/// when it hangs up without answering). Cheap modules run inline
 /// meanwhile. Never blocks longer than the largest deadline.
 pub fn computeAll(ctx: *const Context, cfg: *const Config, rt: *Runtime, slots: *Slots) void {
-    const io = ctx.io;
-    const start = Io.Clock.Timestamp.now(io, .awake);
+    const start = Io.Clock.Timestamp.now(ctx.io, .awake);
     var launched: [id_count]bool = @splat(false);
+    slots.* = @splat(null);
 
-    // Launch expensive modules first so they overlap with everything else.
+    // Send the daemon its request first, so it works while we do.
+    var conn: client.Conn = .{};
+    const asked = conn.open(ctx, cfg);
+
+    // Launch the other expensive modules so they overlap with everything else.
     inline for (@typeInfo(Id).@"enum".fields) |f| {
         const id: Id = @enumFromInt(f.value);
-        slots[f.value] = null;
-        if (Impl(id).cost == .expensive and inOrder(cfg, id)) {
-            const job = &rt.jobs[f.value];
-            const args = .{ job, ctx, cfg };
-            if (io.concurrent(Task(id).run, args)) |_| {
-                launched[f.value] = true;
-            } else |_| {
-                // No concurrency available (e.g. thread spawn failed): run inline, without a deadline.
-                @call(.auto, Task(id).run, args);
-                slots[f.value] = job.result;
-            }
+        if (Impl(id).cost == .expensive and inOrder(cfg, id) and !conn.pending[f.value]) {
+            launch(id, ctx, cfg, rt, slots, &launched);
         }
     }
 
@@ -157,21 +178,48 @@ pub fn computeAll(ctx: *const Context, cfg: *const Config, rt: *Runtime, slots: 
         }
     }
 
+    if (asked) {
+        conn.collect(ctx, cfg, start, rt, slots);
+        // What the daemon left unanswered (it hung up early) is computed here.
+        inline for (@typeInfo(Id).@"enum".fields) |f| {
+            const id: Id = @enumFromInt(f.value);
+            if (Impl(id).cost == .expensive and conn.pending[f.value]) launch(id, ctx, cfg, rt, slots, &launched);
+        }
+    }
+
     inline for (@typeInfo(Id).@"enum".fields) |f| {
         const id: Id = @enumFromInt(f.value);
         if (Impl(id).cost == .expensive) {
             if (launched[f.value]) {
-                const timeout_ms = configFor(id, cfg).timeout_ms orelse cfg.timeout_ms;
-                const deadline = start.addDuration(.{ .raw = .fromMilliseconds(timeout_ms), .clock = .awake });
                 const job = &rt.jobs[f.value];
-                if (waitUntil(io, &job.done, deadline)) {
+                if (waitUntil(ctx.io, &job.done, deadlineFor(id, cfg, start))) {
                     slots[f.value] = job.result;
                 } else if (ctx.debug) {
-                    std.debug.print("buta: module {s}: missed its {d} ms deadline\n", .{ @tagName(id), timeout_ms });
+                    std.debug.print("buta: module {s}: missed its {d} ms deadline\n", .{ @tagName(id), timeoutFor(id, cfg) });
                 }
             }
         }
     }
+}
+
+fn launch(comptime id: Id, ctx: *const Context, cfg: *const Config, rt: *Runtime, slots: *Slots, launched: *[id_count]bool) void {
+    const job = &rt.jobs[@intFromEnum(id)];
+    const args = .{ job, ctx, cfg };
+    if (ctx.io.concurrent(Task(id).run, args)) |_| {
+        launched[@intFromEnum(id)] = true;
+    } else |_| {
+        // No concurrency available (e.g. thread spawn failed): run inline, without a deadline.
+        @call(.auto, Task(id).run, args);
+        slots[@intFromEnum(id)] = job.result;
+    }
+}
+
+pub fn timeoutFor(comptime id: Id, cfg: *const Config) u32 {
+    return configFor(id, cfg).timeout_ms orelse cfg.timeout_ms;
+}
+
+pub fn deadlineFor(comptime id: Id, cfg: *const Config, start: Io.Clock.Timestamp) Io.Clock.Timestamp {
+    return start.addDuration(.{ .raw = .fromMilliseconds(timeoutFor(id, cfg)), .clock = .awake });
 }
 
 /// Waits for `event` until `deadline`. Returns whether it was set in time.
@@ -196,11 +244,11 @@ fn Task(comptime id: Id) type {
     };
 }
 
-fn inOrder(cfg: *const Config, id: Id) bool {
+pub fn inOrder(cfg: *const Config, id: Id) bool {
     return std.mem.indexOfScalar(Id, cfg.order, id) != null;
 }
 
-fn computeOne(comptime id: Id, ctx: *const Context, cfg: *const Impl(id).Config, arena: Allocator) ?Data {
+pub fn computeOne(comptime id: Id, ctx: *const Context, cfg: *const Impl(id).Config, arena: Allocator) ?Data {
     const data = Impl(id).compute(ctx, cfg, arena) catch |err| {
         if (ctx.debug) std.debug.print("buta: module {s}: {s}\n", .{ @tagName(id), @errorName(err) });
         return null;

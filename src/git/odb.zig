@@ -2,7 +2,9 @@
 //!
 //! Pack and index files are memory-mapped, so a lookup touches only the
 //! pages it needs. All returned object data is allocated from the arena the
-//! database was opened with and lives as long as that arena.
+//! database was opened with and lives as long as that arena. A short-lived
+//! process may simply exit; a long-lived one (the daemon) calls `close` to
+//! unmap the packs.
 
 const std = @import("std");
 const Io = std.Io;
@@ -60,6 +62,7 @@ pub const Odb = struct {
 
     pub fn open(io: Io, arena: Allocator, objects_dir: []const u8) !Odb {
         var packs: std.ArrayList(Pack) = .empty;
+        errdefer for (packs.items) |*p| p.close(io);
         const pack_dir_path = try std.fmt.allocPrint(arena, "{s}/pack", .{objects_dir});
         if (Io.Dir.cwd().openDir(io, pack_dir_path, .{ .iterate = true })) |pack_dir_const| {
             var pack_dir = pack_dir_const;
@@ -68,8 +71,11 @@ pub const Odb = struct {
             while (try it.next(io)) |entry| {
                 if (!std.mem.endsWith(u8, entry.name, ".idx")) continue;
                 const base = entry.name[0 .. entry.name.len - ".idx".len];
-                const pack = Pack.open(io, pack_dir, base, arena) catch continue; // skip unusable packs
-                try packs.append(arena, pack);
+                var pack = Pack.open(io, pack_dir, base, arena) catch continue; // skip unusable packs
+                packs.append(arena, pack) catch |e| {
+                    pack.close(io);
+                    return e;
+                };
             }
         } else |err| switch (err) {
             error.FileNotFound => {},
@@ -82,6 +88,13 @@ pub const Odb = struct {
             .packs = packs.items,
             .window = try arena.alloc(u8, flate.max_window_len),
         };
+    }
+
+    /// Unmaps the packfiles. Object data already returned stays valid (it
+    /// lives in the arena); the database must not be used afterwards.
+    pub fn close(odb: *Odb) void {
+        for (odb.packs) |*p| p.close(odb.io);
+        odb.packs = &.{};
     }
 
     pub fn read(odb: *Odb, oid: Oid) Error!Object {
@@ -177,13 +190,20 @@ const Pack = struct {
     idx: []const u8,
     data: []const u8,
     count: u32,
+    /// The mappings behind `idx` and `data` (null when the file was read
+    /// into the arena instead, or is empty).
+    maps: [2]?Io.File.MemoryMap = .{ null, null },
 
     const idx_magic = "\xfftOc";
 
     fn open(io: Io, dir: Io.Dir, base: []const u8, arena: Allocator) !Pack {
         var name_buf: [std.fs.max_name_bytes + 8]u8 = undefined;
-        const idx = try mapFile(io, dir, try std.fmt.bufPrint(&name_buf, "{s}.idx", .{base}), arena);
-        const data = try mapFile(io, dir, try std.fmt.bufPrint(&name_buf, "{s}.pack", .{base}), arena);
+        var idx_file = try mapFile(io, dir, try std.fmt.bufPrint(&name_buf, "{s}.idx", .{base}), arena);
+        errdefer if (idx_file.map) |*mm| mm.destroy(io);
+        var data_file = try mapFile(io, dir, try std.fmt.bufPrint(&name_buf, "{s}.pack", .{base}), arena);
+        errdefer if (data_file.map) |*mm| mm.destroy(io);
+        const idx = idx_file.bytes;
+        const data = data_file.bytes;
 
         // v2 idx: magic, version, 256-entry fanout, then oids, crcs, offsets.
         if (idx.len < 8 + 256 * 4 or !std.mem.eql(u8, idx[0..4], idx_magic)) return error.UnsupportedPackVersion;
@@ -194,7 +214,14 @@ const Pack = struct {
 
         const count = std.mem.readInt(u32, idx[8 + 255 * 4 ..][0..4], .big);
         if (idx.len < 8 + 256 * 4 + @as(usize, count) * (20 + 4 + 4)) return error.CorruptObject;
-        return .{ .idx = idx, .data = data, .count = count };
+        return .{ .idx = idx, .data = data, .count = count, .maps = .{ idx_file.map, data_file.map } };
+    }
+
+    fn close(p: *Pack, io: Io) void {
+        for (&p.maps) |*m| if (m.*) |*mm| {
+            mm.destroy(io);
+            m.* = null;
+        };
     }
 
     fn fanout(p: *const Pack, i: usize) u32 {
@@ -284,22 +311,23 @@ const Pack = struct {
     }
 };
 
-fn mapFile(io: Io, dir: Io.Dir, name: []const u8, arena: Allocator) ![]const u8 {
+const MappedFile = struct { bytes: []const u8, map: ?Io.File.MemoryMap };
+
+fn mapFile(io: Io, dir: Io.Dir, name: []const u8, arena: Allocator) !MappedFile {
     const file = try dir.openFile(io, name, .{});
     defer file.close(io);
     const len = try file.length(io);
-    if (len == 0) return &.{};
+    if (len == 0) return .{ .bytes = &.{}, .map = null };
     if (Io.File.MemoryMap.create(io, file, .{
         .len = @intCast(len),
         .protection = .{ .read = true, .write = false },
         .populate = false,
     })) |mm| {
-        // Never unmapped: the mapping lives until process exit, like the arena.
-        return mm.memory[0..@intCast(len)];
+        return .{ .bytes = mm.memory[0..@intCast(len)], .map = mm };
     } else |_| {
         const buf = try arena.alloc(u8, @intCast(len));
         if (try file.readPositionalAll(io, buf, 0) != len) return error.CorruptObject;
-        return buf;
+        return .{ .bytes = buf, .map = null };
     }
 }
 
