@@ -9,6 +9,8 @@ pub const Shell = enum {
     bash,
     zsh,
     fish,
+    /// The string `prompt` returns is printed as is, never re-evaluated.
+    powershell,
     /// Raw ANSI output with no prompt quoting (debugging, other consumers).
     plain,
 };
@@ -186,7 +188,7 @@ fn writeNonPrinting(shell: Shell, w: *Writer, seq: []const u8) Writer.Error!void
     const open, const close = switch (shell) {
         .bash => .{ "\\[", "\\]" },
         .zsh => .{ "%{", "%}" },
-        .fish, .plain => .{ "", "" },
+        .fish, .powershell, .plain => .{ "", "" },
     };
     try w.writeAll(open);
     try w.writeAll(seq);
@@ -214,7 +216,7 @@ fn writeEscaped(shell: Shell, w: *Writer, s: []const u8) Writer.Error!void {
                 else => null,
             },
             .zsh => if (c == '%') "%%" else null,
-            .fish, .plain => null,
+            .fish, .powershell, .plain => null,
         };
         if (replacement) |r| {
             try w.writeAll(s[start..i]);

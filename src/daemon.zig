@@ -1,20 +1,24 @@
 //! `buta daemon`: computes repo-scoped modules (see `module.Scope`) for
-//! `buta prompt` and caches the results until inotify reports a change in
-//! the repository.
+//! `buta prompt` and caches the results until the file system reports a
+//! change in the repository (inotify on Linux, kqueue on macOS; see
+//! src/watch.zig).
 //!
 //! Freshness. A cached result for a repository is served only if no
-//! relevant inotify event arrived since it was computed. The kernel queues
-//! an inotify event before the syscall that caused it returns, and the
-//! daemon drains the queue before every lookup, so a change made by a
-//! command that has finished is always seen by the next prompt.
+//! relevant event arrived since it was computed. The kernel queues an event
+//! before the syscall that caused it returns, and the daemon drains the
+//! queue before every lookup, so a change made by a command that has
+//! finished is always seen by the next prompt.
 //!
 //! What is watched, per repository: the git dir (HEAD, index), the common
-//! dir (config, packed-refs), every directory under refs/, and every work
-//! tree directory that contains a tracked file. Untracked files are not
-//! reported yet, so directories holding none (build output, node_modules)
-//! are not watched and churn there costs nothing. The watch set is
-//! rebuilt from the index whenever the index changes or a watched directory
-//! is created, removed or moved.
+//! dir (config, packed-refs, info/exclude), every directory under refs/,
+//! the user's global git config and excludes files, every work tree
+//! directory that holds a tracked file, and every other one that is not
+//! ignored (untracked files count). Ignored directories (build output,
+//! node_modules) are not watched, so churn there costs nothing. With
+//! kqueue, which doesn't see writes to the files in a watched directory,
+//! every tracked file and .gitignore is watched too. The watch set is
+//! rebuilt whenever the index or an ignore rule changes, or a watched
+//! directory gains, loses or renames an entry that is a directory.
 //!
 //! Threads. The main thread accepts connections; each connection is
 //! handled on a pool thread. All shared state is behind one mutex, held
@@ -24,13 +28,17 @@
 
 const std = @import("std");
 const Io = std.Io;
-const linux = std.os.linux;
 const Allocator = std.mem.Allocator;
 const git = @import("git");
 const module = @import("module.zig");
 const protocol = @import("protocol.zig");
 const wire = @import("wire.zig");
-const Context = @import("context.zig").Context;
+const sys = @import("sys.zig");
+const watch = @import("watch.zig");
+const context = @import("context.zig");
+const Context = context.Context;
+const Env = @import("env.zig").Env;
+const git_status = @import("modules/git_status.zig");
 
 /// Repositories with cached results; the least recently used one is
 /// dropped (with its watches) to make room.
@@ -39,23 +47,29 @@ const max_repos = 64;
 const client_timeout_s = 2;
 /// Connections handled at once; more are refused (the client computes locally).
 const max_connections = 64;
+/// kqueue: file descriptors kept free for connections and computing.
+const reserved_fds = 256;
 
-const watch_mask = linux.IN.MODIFY | linux.IN.ATTRIB | linux.IN.CREATE | linux.IN.DELETE |
-    linux.IN.MOVED_FROM | linux.IN.MOVED_TO | linux.IN.DELETE_SELF | linux.IN.MOVE_SELF |
-    linux.IN.ONLYDIR | linux.IN.DONT_FOLLOW;
-
-/// What a watched directory is to the repositories using it, which decides
-/// which events matter. Later tags are more inclusive.
-const Kind = enum(u2) {
-    /// git dir or common dir: only the files in `git_files`.
+/// What a watched directory or file is to the repositories using it, which
+/// decides which events matter. For directories (which inotify may share
+/// between repositories) later tags are more inclusive.
+const Kind = enum(u3) {
+    /// git dir, common dir, info/: only the files in `git_files`.
     git,
+    /// a directory holding a global git file: only those (`global_names`).
+    global,
     /// refs/ and below: everything except lock files.
     refs,
     /// a work tree directory: everything.
     work,
+    /// kqueue: a tracked file.
+    file,
+    /// kqueue: a file that decides what is watched (the index, HEAD, a
+    /// .gitignore, a global git file): any change rebuilds the watch set.
+    rules,
 };
 
-const git_files = [_][]const u8{ "HEAD", "index", "packed-refs", "config", "commondir", "refs" };
+const git_files = [_][]const u8{ "HEAD", "index", "packed-refs", "config", "commondir", "refs", "info", "exclude" };
 
 const Watch = struct {
     /// Bit i set: `repos[i]` uses this watch.
@@ -76,7 +90,7 @@ const Repo = struct {
     git_dir: []const u8,
     common_dir: []const u8,
     work_tree: []const u8,
-    /// Bumped by every relevant inotify event.
+    /// Bumped by every relevant file system event.
     gen: u64 = 0,
     last_used: u64 = 0,
     /// Requests currently using this repository; it can't be evicted meanwhile.
@@ -93,15 +107,21 @@ const Repo = struct {
 const State = struct {
     io: Io,
     gpa: Allocator,
-    environ: std.process.Environ,
+    env: Env,
+    home: ?[]const u8,
     debug: bool,
-    inotify: i32,
+    watcher: watch.Watcher,
+    /// kqueue: handles allowed before a repository is left unwatched.
+    max_watches: u64,
     started: Io.Clock.Timestamp,
+    exe: ?ExeId,
 
     mutex: Io.Mutex = .init,
     // Everything below is guarded by `mutex`.
     watches: std.AutoHashMapUnmanaged(i32, Watch) = .empty,
     repos: [max_repos]?*Repo = @splat(null),
+    /// Base names of the global git files (inotify watches their directories).
+    global_names: std.ArrayList([]const u8) = .empty,
     tick: u64 = 0,
     hits: u64 = 0,
     misses: u64 = 0,
@@ -118,42 +138,49 @@ const State = struct {
         if (s.debug) std.debug.print("buta daemon: " ++ fmt ++ "\n", args);
     }
 
-    // ------------------------------------------------------------ inotify
+    // ------------------------------------------------------------ events
 
-    /// Applies every queued inotify event. Caller holds the lock.
+    /// Applies every queued event. Caller holds the lock.
     fn drain(s: *State) void {
-        var buf: [16 * 1024]u8 align(@alignOf(linux.inotify_event)) = undefined;
-        while (true) {
-            const rc = linux.read(s.inotify, &buf, buf.len);
-            switch (linux.errno(rc)) {
-                .SUCCESS => {},
-                .INTR => continue,
-                else => return, // EAGAIN: the queue is empty
-            }
-            var off: usize = 0;
-            while (off + @sizeOf(linux.inotify_event) <= rc) {
-                const ev: *const linux.inotify_event = @ptrCast(@alignCast(&buf[off]));
-                s.event(ev.wd, ev.mask, ev.getName());
-                off += @sizeOf(linux.inotify_event) + ev.len;
-            }
-        }
+        s.watcher.drain(s, onEvent);
     }
 
-    fn event(s: *State, wd: i32, mask: u32, name: ?[]const u8) void {
-        if (mask & linux.IN.Q_OVERFLOW != 0) {
-            s.log("inotify queue overflow: dropping every cached result", .{});
+    fn onEvent(s: *State, ev: watch.Event) void {
+        if (ev.overflow) {
+            s.log("event queue overflow: dropping every cached result", .{});
             return s.invalidate(std.math.maxInt(u64), true);
         }
-        const w = s.watches.get(wd) orelse return;
-        if (mask & linux.IN.IGNORED != 0) {
+        const w = s.watches.get(ev.handle) orelse return;
+        if (ev.gone) {
             // The directory is gone (or unmounted): rebuild the watch set.
-            _ = s.watches.remove(wd);
+            _ = s.watches.remove(ev.handle);
+            s.watcher.remove(ev.handle);
             return s.invalidate(w.repos, true);
         }
-        if (!relevant(w.kind, name)) return;
-        const structural = mask & (linux.IN.ISDIR | linux.IN.DELETE_SELF | linux.IN.MOVE_SELF) != 0 or
-            (w.kind == .git and std.mem.eql(u8, name orelse "", "index"));
-        s.invalidate(w.repos, structural);
+        if (!s.relevant(w.kind, ev.name)) return;
+        s.invalidate(w.repos, ev.structural or s.rebuildsWatches(w.kind, ev.name));
+    }
+
+    fn relevant(s: *const State, kind: Kind, name: ?[]const u8) bool {
+        const n = name orelse return true; // the watched directory or file itself
+        return switch (kind) {
+            .work, .file, .rules => true,
+            .refs => !std.mem.endsWith(u8, n, ".lock"),
+            .git => inList(&git_files, n),
+            .global => inList(s.global_names.items, n),
+        };
+    }
+
+    /// A change that can alter what must be watched.
+    fn rebuildsWatches(s: *const State, kind: Kind, name: ?[]const u8) bool {
+        if (kind == .rules) return true;
+        const n = name orelse return false;
+        return switch (kind) {
+            .git => std.mem.eql(u8, n, "index") or std.mem.eql(u8, n, "exclude"),
+            .global => inList(s.global_names.items, n),
+            .work => std.mem.eql(u8, n, ".gitignore"),
+            else => false,
+        };
     }
 
     fn invalidate(s: *State, repos: u64, resync: bool) void {
@@ -212,7 +239,7 @@ const State = struct {
         w.repos &= ~bit(i);
         if (w.repos == 0) {
             _ = s.watches.remove(wd);
-            _ = linux.inotify_rm_watch(s.inotify, wd);
+            s.watcher.remove(wd);
         }
     }
 
@@ -255,27 +282,60 @@ const State = struct {
 
     /// Rebuilds the watch set of `repos[i]`. Called without the lock; the
     /// caller's `busy` reference keeps the slot alive. Returns whether
-    /// every directory is now watched.
+    /// everything is now watched.
     fn sync(s: *State, i: usize, arena: Allocator) bool {
         const r = s.repos[i].?; // stable while busy
+        const files = watch.Watcher.watches_files;
         var wds: std.ArrayList(i32) = .empty;
         var ok = true;
+        const repo: git.Repo = .{ .git_dir = r.git_dir, .common_dir = r.common_dir, .work_tree = r.work_tree };
+        const global = git_status.globalFiles(&s.context(r.work_tree));
 
         // The git side first: once HEAD and the index are watched, a change
         // to them while the rest is set up still invalidates the result.
-        var git_dirs: std.ArrayList(Dir) = .empty;
-        appendDir(&git_dirs, arena, r.git_dir, .git) catch return false;
-        appendDir(&git_dirs, arena, r.common_dir, .git) catch return false;
+        var git_side: std.ArrayList(Target) = .empty;
+        const info = std.fmt.allocPrint(arena, "{s}/info", .{r.common_dir}) catch return false;
+        for ([_][]const u8{ r.git_dir, r.common_dir, info }) |d| add(&git_side, arena, d, .git, true) catch return false;
+        if (files) {
+            for ([_][2][]const u8{ .{ r.git_dir, "HEAD" }, .{ r.git_dir, "index" }, .{ r.common_dir, "config" }, .{ r.common_dir, "packed-refs" }, .{ info, "exclude" } }) |f| {
+                const path = std.fmt.allocPrint(arena, "{s}/{s}", .{ f[0], f[1] }) catch return false;
+                add(&git_side, arena, path, .rules, false) catch return false;
+            }
+        }
         const refs = std.fmt.allocPrint(arena, "{s}/refs", .{r.common_dir}) catch return false;
-        collectTree(s.io, arena, refs, &git_dirs) catch return false;
-        s.addWatches(i, git_dirs.items, &wds, arena, &ok) catch return false;
+        collectTree(s.io, arena, refs, &git_side) catch return false;
+        // Global config and excludes: their directories (inotify, filtered
+        // by name), or the files themselves (kqueue).
+        const external = git.status.externalFiles(s.io, arena, repo, global) catch &.{};
+        for (external) |path| {
+            if (files) {
+                add(&git_side, arena, path, .rules, false) catch return false;
+                continue;
+            }
+            // The nearest directory that exists, for the name that would
+            // lead to the file (`~/.config` for a missing ~/.config/git/ignore).
+            var name = std.fs.path.basename(path);
+            var dir = std.fs.path.dirname(path) orelse continue;
+            while (!isDir(s.io, dir)) {
+                name = std.fs.path.basename(dir);
+                dir = std.fs.path.dirname(dir) orelse break;
+            }
+            add(&git_side, arena, dir, .global, true) catch return false;
+            s.addGlobalName(name);
+        }
+        s.addWatches(i, git_side.items, &wds, arena, &ok) catch return false;
 
-        var work_dirs: std.ArrayList(Dir) = .empty;
-        collectTracked(s.io, arena, r, &work_dirs) catch |e| {
-            s.log("{s}: cannot read the index: {s}", .{ r.work_tree, @errorName(e) });
+        var work_side: std.ArrayList(Target) = .empty;
+        if (git.status.watchList(s.io, arena, repo, global, files)) |list| {
+            for (list.dirs) |d| add(&work_side, arena, d, .work, true) catch return false;
+            for (list.files) |f| add(&work_side, arena, f, .file, false) catch return false;
+            if (files) for (list.ignore_files) |f| add(&work_side, arena, f, .rules, false) catch return false;
+        } else |e| {
+            s.log("{s}: cannot list what to watch: {s}", .{ r.work_tree, @errorName(e) });
             ok = false;
-        };
-        s.addWatches(i, work_dirs.items, &wds, arena, &ok) catch return false;
+            add(&work_side, arena, r.work_tree, .work, true) catch return false;
+        }
+        s.addWatches(i, work_side.items, &wds, arena, &ok) catch return false;
 
         // The same directory can be listed twice (git dir = common dir).
         std.mem.sortUnstable(i32, wds.items, {}, std.sort.asc(i32));
@@ -297,64 +357,96 @@ const State = struct {
             for (wds.items) |wd| s.release(wd, i);
             ok = false;
         };
-        s.log("{s}: watching {d} directories{s}", .{ r.work_tree, r.wds.items.len, if (ok) "" else " (incomplete)" });
+        s.log("{s}: watching {d} {s}{s}", .{ r.work_tree, r.wds.items.len, if (files) "files and directories" else "directories", if (ok) "" else " (incomplete)" });
         return ok;
     }
 
-    fn addWatches(s: *State, i: usize, dirs: []const Dir, wds: *std.ArrayList(i32), arena: Allocator, ok: *bool) !void {
-        try wds.ensureUnusedCapacity(arena, dirs.len);
+    fn addGlobalName(s: *State, name: []const u8) void {
+        s.lock();
+        defer s.unlock();
+        if (inList(s.global_names.items, name)) return;
+        const copy = s.gpa.dupe(u8, name) catch return;
+        s.global_names.append(s.gpa, copy) catch s.gpa.free(copy);
+    }
+
+    fn addWatches(s: *State, i: usize, targets: []const Target, wds: *std.ArrayList(i32), arena: Allocator, ok: *bool) !void {
+        try wds.ensureUnusedCapacity(arena, targets.len);
         var path_buf: [std.fs.max_path_bytes + 1]u8 = undefined;
         s.lock();
         defer s.unlock();
-        for (dirs) |d| {
-            const path = std.fmt.bufPrintSentinel(&path_buf, "{s}", .{d.path}, 0) catch {
+        for (targets) |t| {
+            if (watch.Watcher.watches_files and s.watches.count() >= s.max_watches) {
+                if (ok.*) s.log("{s}: out of file descriptors for watches", .{t.path});
+                ok.* = false;
+                return;
+            }
+            const path = std.fmt.bufPrintSentinel(&path_buf, "{s}", .{t.path}, 0) catch {
                 ok.* = false;
                 continue;
             };
-            const rc = linux.inotify_add_watch(s.inotify, path, watch_mask);
-            switch (linux.errno(rc)) {
-                .SUCCESS => {},
-                // Gone since it was listed: its parent's watch reports that.
-                .NOENT, .NOTDIR => continue,
-                else => |e| {
-                    // ENOSPC: fs.inotify.max_user_watches is exhausted.
-                    if (ok.*) s.log("{s}: cannot watch: {s}", .{ d.path, @tagName(e) });
+            const wd = s.watcher.add(path, t.is_dir) catch |e| switch (e) {
+                // Gone since it was listed (or never there): a watched
+                // directory reports its arrival.
+                error.NotFound, error.NotDir => continue,
+                else => {
+                    // NoSpace: fs.inotify.max_user_watches is exhausted.
+                    if (ok.*) s.log("{s}: cannot watch: {s}", .{ t.path, @errorName(e) });
                     ok.* = false;
                     continue;
                 },
-            }
-            const wd: i32 = @intCast(rc);
+            };
             const gop = s.watches.getOrPut(s.gpa, wd) catch {
+                s.watcher.remove(wd);
                 ok.* = false;
                 continue;
             };
             if (gop.found_existing) {
                 gop.value_ptr.repos |= bit(i);
-                gop.value_ptr.kind = @enumFromInt(@max(@intFromEnum(gop.value_ptr.kind), @intFromEnum(d.kind)));
+                gop.value_ptr.kind = @enumFromInt(@max(@intFromEnum(gop.value_ptr.kind), @intFromEnum(t.kind)));
             } else {
-                gop.value_ptr.* = .{ .repos = bit(i), .kind = d.kind };
+                gop.value_ptr.* = .{ .repos = bit(i), .kind = t.kind };
             }
             wds.appendAssumeCapacity(wd);
         }
     }
 
+    /// The Context modules are computed with: the request's directory, and
+    /// the daemon's own environment.
+    fn context(s: *const State, cwd: []const u8) Context {
+        return .{
+            .io = s.io,
+            .env = s.env,
+            .cwd = cwd,
+            .physical_cwd = cwd,
+            .home = s.home,
+            .debug = s.debug,
+        };
+    }
+
     // ------------------------------------------------------------ requests
 
     fn handle(s: *State, fd: i32) void {
-        defer _ = linux.close(fd);
+        defer sys.close(fd);
         var arena_state: std.heap.ArenaAllocator = .init(s.gpa);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
 
         var header: [protocol.header_len]u8 = undefined;
-        if (!readAll(fd, &header)) return;
+        if (!sys.readAll(fd, &header)) return;
         const len = protocol.parseHeader(&header) catch |e| {
             // FingerprintMismatch: the client is a different build of buta.
             s.log("rejecting a client: {s}", .{@errorName(e)});
+            if (e == error.FingerprintMismatch and replacedExe(s.io, s.exe)) {
+                // buta was upgraded: make way, so that the new build's
+                // prompt can start its own daemon.
+                s.log("{s} was replaced: exiting", .{s.exe.?.path});
+                releaseSocket();
+                sys.exit(0);
+            }
             return;
         };
         const payload = arena.alloc(u8, len) catch return;
-        if (!readAll(fd, payload)) return;
+        if (!sys.readAll(fd, payload)) return;
         const request = wire.decodeSlice(protocol.Request, payload, arena) catch |e| {
             s.log("bad request: {s}", .{@errorName(e)});
             return;
@@ -369,7 +461,7 @@ const State = struct {
                 // take over.
                 releaseSocket();
                 sendStatus(fd, st, arena);
-                linux.exit_group(0);
+                sys.exit(0);
             },
         }
     }
@@ -380,7 +472,7 @@ const State = struct {
         var repos: u32 = 0;
         for (s.repos) |r| repos += @intFromBool(r != null);
         return .{
-            .pid = linux.getpid(),
+            .pid = sys.getpid(),
             .uptime_s = @intCast(@max(0, s.started.untilNow(s.io).raw.toSeconds())),
             .repos = repos,
             .watches = s.watches.count(),
@@ -450,14 +542,8 @@ const State = struct {
             s.unlock();
         }
 
-        const ctx: Context = .{
-            .io = s.io,
-            .environ = s.environ,
-            .cwd = p.cwd,
-            .physical_cwd = p.cwd,
-            .home = null,
-            .debug = p.debug or s.debug,
-        };
+        var ctx = s.context(p.cwd);
+        ctx.debug = p.debug or s.debug;
         for (p.modules, answered) |m, done| {
             if (done) continue;
             const result = computeEncoded(&ctx, m, arena);
@@ -487,59 +573,37 @@ fn orderI32(a: i32, b: i32) std.math.Order {
     return std.math.order(a, b);
 }
 
-fn relevant(kind: Kind, name: ?[]const u8) bool {
-    const n = name orelse return true; // the watched directory itself
-    return switch (kind) {
-        .work => true,
-        .refs => !std.mem.endsWith(u8, n, ".lock"),
-        .git => for (git_files) |f| {
-            if (std.mem.eql(u8, n, f)) break true;
-        } else false,
-    };
+fn inList(list: []const []const u8, name: []const u8) bool {
+    for (list) |item| {
+        if (std.mem.eql(u8, item, name)) return true;
+    }
+    return false;
 }
 
-const Dir = struct { path: []const u8, kind: Kind };
+fn isDir(io: Io, path: []const u8) bool {
+    const st = Io.Dir.cwd().statFile(io, path, .{}) catch return false;
+    return st.kind == .directory;
+}
 
-fn appendDir(list: *std.ArrayList(Dir), arena: Allocator, path: []const u8, kind: Kind) !void {
-    try list.append(arena, .{ .path = path, .kind = kind });
+/// Something to watch.
+const Target = struct { path: []const u8, kind: Kind, is_dir: bool };
+
+fn add(list: *std.ArrayList(Target), arena: Allocator, path: []const u8, kind: Kind, is_dir: bool) !void {
+    try list.append(arena, .{ .path = path, .kind = kind, .is_dir = is_dir });
 }
 
 /// `root` and every directory below it, as `.refs`.
-fn collectTree(io: Io, arena: Allocator, root: []const u8, out: *std.ArrayList(Dir)) !void {
+fn collectTree(io: Io, arena: Allocator, root: []const u8, out: *std.ArrayList(Target)) !void {
     var dir = Io.Dir.cwd().openDir(io, root, .{ .iterate = true }) catch |e| switch (e) {
         error.FileNotFound, error.NotDir => return,
         else => |x| return x,
     };
     defer dir.close(io);
-    try appendDir(out, arena, root, .refs);
+    try add(out, arena, root, .refs, true);
     var it = dir.iterate();
     while (try it.next(io)) |entry| {
         if (entry.kind != .directory) continue;
         try collectTree(io, arena, try std.fmt.allocPrint(arena, "{s}/{s}", .{ root, entry.name }), out);
-    }
-}
-
-/// The work tree root and every directory holding a tracked path.
-fn collectTracked(io: Io, arena: Allocator, r: *const Repo, out: *std.ArrayList(Dir)) !void {
-    try appendDir(out, arena, r.work_tree, .work);
-    const path = try std.fmt.allocPrint(arena, "{s}/index", .{r.git_dir});
-    const data = Io.Dir.cwd().readFileAlloc(io, path, arena, .unlimited) catch |e| switch (e) {
-        error.FileNotFound => return, // no index yet: nothing tracked
-        else => |x| return x,
-    };
-    const index = try git.index.parse(arena, data);
-    var seen: std.StringHashMapUnmanaged(void) = .empty;
-    for (index.entries) |e| {
-        // Every ancestor directory, so that removing a whole subtree is seen
-        // in its parent too.
-        var end = std.mem.lastIndexOfScalar(u8, e.path, '/') orelse continue;
-        while (true) {
-            const rel = e.path[0..end];
-            const gop = try seen.getOrPut(arena, rel);
-            if (gop.found_existing) break; // its ancestors are in already
-            try appendDir(out, arena, try std.fmt.allocPrint(arena, "{s}/{s}", .{ r.work_tree, rel }), .work);
-            end = std.mem.lastIndexOfScalar(u8, rel, '/') orelse break;
-        }
     }
 }
 
@@ -578,35 +642,7 @@ fn sendMessage(fd: i32, comptime T: type, value: *const T, arena: Allocator) voi
     wire.encode(T, value, &aw.writer) catch return;
     const bytes = aw.written();
     std.mem.writeInt(u32, bytes[0..4], @intCast(bytes.len - 4), .little);
-    _ = writeAll(fd, bytes);
-}
-
-fn readAll(fd: i32, buf: []u8) bool {
-    var off: usize = 0;
-    while (off < buf.len) {
-        const rc = linux.read(fd, buf[off..].ptr, buf.len - off);
-        switch (linux.errno(rc)) {
-            .SUCCESS => if (rc == 0) return false else {
-                off += rc;
-            },
-            .INTR => {},
-            else => return false, // EAGAIN: SO_RCVTIMEO expired
-        }
-    }
-    return true;
-}
-
-fn writeAll(fd: i32, bytes: []const u8) bool {
-    var off: usize = 0;
-    while (off < bytes.len) {
-        const rc = linux.sendto(fd, bytes[off..].ptr, bytes.len - off, linux.MSG.NOSIGNAL, null, 0);
-        switch (linux.errno(rc)) {
-            .SUCCESS => off += rc,
-            .INTR => {},
-            else => return false,
-        }
-    }
-    return true;
+    _ = sys.writeAll(fd, bytes);
 }
 
 // ---------------------------------------------------------------- lifecycle
@@ -617,13 +653,33 @@ var lock_fd: i32 = -1;
 
 /// Removes the socket and drops the lock. Async-signal-safe.
 fn releaseSocket() void {
-    _ = linux.unlink(&socket_path);
-    if (lock_fd >= 0) _ = linux.close(lock_fd);
+    sys.unlink(&socket_path);
+    if (lock_fd >= 0) sys.close(lock_fd);
 }
 
-fn onSignal(_: linux.SIG) callconv(.c) void {
+fn onSignal() void {
     releaseSocket();
-    linux.exit_group(0);
+    sys.exit(0);
+}
+
+/// Identifies the executable the daemon runs from, to notice an upgrade.
+const ExeId = struct {
+    path: []const u8,
+    inode: Io.File.INode,
+    size: u64,
+    mtime: i96,
+
+    fn of(io: Io, path: []const u8) ?ExeId {
+        const st = Io.Dir.cwd().statFile(io, path, .{}) catch return null;
+        return .{ .path = path, .inode = st.inode, .size = st.size, .mtime = st.mtime.nanoseconds };
+    }
+};
+
+/// The file the daemon was started from is gone or is another file now.
+fn replacedExe(io: Io, exe: ?ExeId) bool {
+    const old = exe orelse return false;
+    const now = ExeId.of(io, old.path) orelse return true;
+    return now.inode != old.inode or now.size != old.size or now.mtime != old.mtime;
 }
 
 pub const Action = enum { run, stop, status };
@@ -634,27 +690,20 @@ pub const Options = struct {
     detach: bool = false,
 };
 
-const EnvLookup = struct {
-    environ: std.process.Environ,
-    pub fn get(e: EnvLookup, name: []const u8) ?[]const u8 {
-        return e.environ.getPosix(name);
-    }
-};
-
-pub fn main(environ: std.process.Environ, opts: Options, out: *Io.Writer, err: *Io.Writer) u8 {
+pub fn main(io: Io, env: Env, opts: Options, out: *Io.Writer, err: *Io.Writer) u8 {
     if (!protocol.supported) {
         err.writeAll("buta daemon: not supported on this platform\n") catch {};
         return 1;
     }
-    const path = protocol.socketPath(&socket_path, EnvLookup{ .environ = environ }) orelse {
-        err.writeAll(if (environ.getPosix("BUTA_SOCKET") orelse environ.getPosix("XDG_RUNTIME_DIR")) |p| if (p.len > 0)
-            "buta daemon: the socket path is too long (at most 107 bytes) or relative\n"
+    const path = protocol.socketPath(&socket_path, env) orelse {
+        err.writeAll(if (env.get("BUTA_SOCKET") orelse env.get("XDG_RUNTIME_DIR") orelse env.get("TMPDIR")) |p| if (p.len > 0)
+            "buta daemon: the socket path is too long or relative\n"
         else
             "buta daemon: BUTA_SOCKET is empty, which disables the daemon\n" else "buta daemon: no socket path: set XDG_RUNTIME_DIR or BUTA_SOCKET\n") catch {};
         return 1;
     };
     return switch (opts.action) {
-        .run => run(environ, path, opts.detach, err),
+        .run => run(io, env, path, opts.detach, err),
         .stop, .status => control(path, opts.action, out, err),
     };
 }
@@ -665,8 +714,8 @@ fn control(path: [:0]const u8, action: Action, out: *Io.Writer, err: *Io.Writer)
         out.writeAll("buta daemon: not running\n") catch {};
         return 3;
     };
-    defer _ = linux.close(fd);
-    setTimeouts(fd);
+    defer sys.close(fd);
+    sys.setTimeouts(fd, client_timeout_s);
     var buf: [64 * 1024]u8 = undefined;
     var fba: std.heap.FixedBufferAllocator = .init(&buf);
     const arena = fba.allocator();
@@ -677,11 +726,11 @@ fn control(path: [:0]const u8, action: Action, out: *Io.Writer, err: *Io.Writer)
     var hw: Io.Writer = .fixed(&header);
     protocol.writeHeader(&hw, aw.written().len) catch return 1;
     var len_buf: [4]u8 = undefined;
-    const reply_ok = writeAll(fd, &header) and writeAll(fd, aw.written()) and readAll(fd, &len_buf);
+    const reply_ok = sys.writeAll(fd, &header) and sys.writeAll(fd, aw.written()) and sys.readAll(fd, &len_buf);
     const len = std.mem.readInt(u32, &len_buf, .little);
     const st: ?protocol.Status = if (reply_ok and len <= 1024) blk: {
         const body = arena.alloc(u8, len) catch break :blk null;
-        if (!readAll(fd, body)) break :blk null;
+        if (!sys.readAll(fd, body)) break :blk null;
         break :blk wire.decodeSlice(protocol.Status, body, arena) catch null;
     } else null;
     const s = st orelse {
@@ -703,78 +752,67 @@ fn control(path: [:0]const u8, action: Action, out: *Io.Writer, err: *Io.Writer)
     return 0;
 }
 
-fn run(environ: std.process.Environ, path: [:0]const u8, detach: bool, err: *Io.Writer) u8 {
+fn run(io: Io, env: Env, path: [:0]const u8, detach: bool, err: *Io.Writer) u8 {
     // Only one daemon per socket: the lock is held for the daemon's life
     // (and passes to the child on --detach).
     var lock_buf: [std.fs.max_path_bytes]u8 = undefined;
     const lock_path = std.fmt.bufPrintSentinel(&lock_buf, "{s}.lock", .{path}, 0) catch return 1;
-    _ = linux.syscall1(.umask, 0o077);
-    const lock_rc = linux.open(lock_path, .{ .ACCMODE = .RDWR, .CREAT = true, .CLOEXEC = true }, 0o600);
-    if (linux.errno(lock_rc) != .SUCCESS) {
-        err.print("buta daemon: {s}: {s}\n", .{ lock_path, @tagName(linux.errno(lock_rc)) }) catch {};
-        return 1;
-    }
-    if (linux.errno(linux.flock(@intCast(lock_rc), std.posix.LOCK.EX | std.posix.LOCK.NB)) != .SUCCESS) {
+    sys.umask(0o077);
+    const lock = sys.openLockFile(lock_path) catch |e| return fail(err, lock_path, e);
+    sys.tryLock(lock) catch |e| {
+        if (e != error.WouldBlock) return fail(err, lock_path, e);
         err.print("buta daemon: already running ({s})\n", .{path}) catch {};
         return 1;
-    }
-    lock_fd = @intCast(lock_rc);
+    };
+    lock_fd = lock;
 
     // Holding the lock, any socket file left behind is stale.
-    _ = linux.unlink(path);
-    const listen_rc = linux.socket(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0);
-    if (linux.errno(listen_rc) != .SUCCESS) return fail(err, "socket", linux.errno(listen_rc));
-    const listen_fd: i32 = @intCast(listen_rc);
-    var addr: linux.sockaddr.un = .{ .path = @splat(0) };
-    @memcpy(addr.path[0..path.len], path);
-    const bind_rc = linux.bind(listen_fd, @ptrCast(&addr), @sizeOf(linux.sockaddr.un));
-    if (linux.errno(bind_rc) != .SUCCESS) return fail(err, path, linux.errno(bind_rc));
-    if (linux.errno(linux.listen(listen_fd, 128)) != .SUCCESS) return fail(err, "listen", .INVAL);
+    sys.unlink(path);
+    const listen_fd = sys.socket(false) catch |e| return fail(err, "socket", e);
+    sys.listen(listen_fd, path) catch |e| return fail(err, path, e);
+    const watcher = watch.Watcher.init() catch |e| return fail(err, "watcher", e);
 
-    const inotify_rc = linux.inotify_init1(linux.IN.NONBLOCK | linux.IN.CLOEXEC);
-    if (linux.errno(inotify_rc) != .SUCCESS) return fail(err, "inotify_init1", linux.errno(inotify_rc));
-
-    const debug = if (environ.getPosix("BUTA_DEBUG")) |v| v.len > 0 else false;
     if (detach) {
         // Fork before any thread exists. The parent returns once the child
         // owns the socket; the child leaves the terminal's session.
-        const pid = linux.fork();
-        if (linux.errno(pid) != .SUCCESS) return fail(err, "fork", linux.errno(pid));
+        const pid = sys.fork() catch |e| return fail(err, "fork", e);
         if (pid != 0) return 0;
-        _ = linux.setsid();
-        const null_rc = linux.open("/dev/null", .{ .ACCMODE = .RDWR }, 0);
-        if (linux.errno(null_rc) == .SUCCESS) {
-            for (0..3) |fd| _ = linux.dup2(@intCast(null_rc), @intCast(fd));
-            if (null_rc > 2) _ = linux.close(@intCast(null_rc));
-        }
+        sys.detachFromTerminal();
     }
-    _ = linux.chdir("/"); // don't keep a mount point busy
-
-    var act: linux.Sigaction = .{ .handler = .{ .handler = onSignal }, .mask = linux.sigemptyset(), .flags = 0 };
-    for ([_]linux.SIG{ .TERM, .INT, .HUP }) |sig| _ = linux.sigaction(sig, &act, null);
-    act.handler = .{ .handler = linux.SIG.IGN };
-    _ = linux.sigaction(.PIPE, &act, null);
+    sys.chdirRoot(); // don't keep a mount point busy
+    sys.onTerminate(onSignal);
 
     var threaded: Io.Threaded = .init(std.heap.smp_allocator, .{
         .stack_size = 1024 * 1024,
         .concurrent_limit = .limited(max_connections * 2),
     });
-    const io = threaded.io();
+    const daemon_io = threaded.io();
+    var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const exe: ?ExeId = if (std.process.executablePath(io, &exe_buf)) |n| ExeId.of(io, exe_buf[0..n]) else |_| null;
+    var home_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const home: ?[]const u8 = if (env.get("HOME")) |h| blk: {
+        if (h.len > home_buf.len) break :blk null;
+        @memcpy(home_buf[0..h.len], h);
+        break :blk context.normalizeHome(home_buf[0..h.len]);
+    } else null;
     var state: State = .{
-        .io = io,
+        .io = daemon_io,
         .gpa = std.heap.smp_allocator,
-        .environ = environ,
-        .debug = debug,
-        .inotify = @intCast(inotify_rc),
-        .started = Io.Clock.Timestamp.now(io, .awake),
+        .env = env,
+        .home = home,
+        .debug = env.flag("BUTA_DEBUG"),
+        .watcher = watcher,
+        .max_watches = if (watch.Watcher.watches_files) sys.raiseFileLimit() -| reserved_fds else std.math.maxInt(u64),
+        .started = Io.Clock.Timestamp.now(daemon_io, .awake),
+        .exe = exe,
     };
     if (!detach) err.print("buta daemon: listening on {s}\n", .{path}) catch {};
     err.flush() catch {};
     serve(&state, listen_fd);
 }
 
-fn fail(err: *Io.Writer, what: []const u8, e: linux.E) u8 {
-    err.print("buta daemon: {s}: {s}\n", .{ what, @tagName(e) }) catch {};
+fn fail(err: *Io.Writer, what: []const u8, e: sys.Error) u8 {
+    err.print("buta daemon: {s}: {s}\n", .{ what, @errorName(e) }) catch {};
     return 1;
 }
 
@@ -782,40 +820,36 @@ fn serve(s: *State, listen_fd: i32) noreturn {
     // Never awaited: connection tasks free themselves when they finish.
     var group: Io.Group = .init;
     var active: std.atomic.Value(u32) = .init(0);
-    const uid = linux.getuid();
+    const uid = sys.getuid();
     var ns_buf: [64]u8 = undefined;
-    const own_ns = mountNamespace(&ns_buf, linux.getpid()) orelse "";
+    const own_ns = mountNamespace(&ns_buf, sys.getpid()) orelse "";
     while (true) {
-        const rc = linux.accept4(listen_fd, null, null, linux.SOCK.CLOEXEC);
-        switch (linux.errno(rc)) {
-            .SUCCESS => {},
-            .INTR, .CONNABORTED => continue,
-            else => |e| {
+        const fd = sys.accept(listen_fd) catch |e| switch (e) {
+            error.Interrupted => continue,
+            else => {
                 // Out of file descriptors or memory: back off instead of spinning.
-                s.log("accept: {s}", .{@tagName(e)});
-                var ts: linux.timespec = .{ .sec = 0, .nsec = 100 * std.time.ns_per_ms };
-                _ = linux.nanosleep(&ts, null);
+                s.log("accept: {s}", .{@errorName(e)});
+                sys.sleepMs(100);
                 continue;
             },
-        }
-        const fd: i32 = @intCast(rc);
-        const peer = peerCred(fd);
+        };
         // Only the user who runs the daemon may ask it about their files,
         // and only from where paths mean the same files (a client in a
         // container computes locally).
+        const peer = sys.peer(fd);
         if (peer == null or peer.?.uid != uid or !sameMountNamespace(peer.?.pid, own_ns)) {
-            _ = linux.close(fd);
+            sys.close(fd);
             continue;
         }
-        setTimeouts(fd);
+        sys.setTimeouts(fd, client_timeout_s);
         if (active.fetchAdd(1, .monotonic) >= max_connections) {
             _ = active.fetchSub(1, .monotonic);
-            _ = linux.close(fd); // the client computes locally
+            sys.close(fd); // the client computes locally
             continue;
         }
         group.concurrent(s.io, handleTask, .{ s, fd, &active }) catch {
             _ = active.fetchSub(1, .monotonic);
-            _ = linux.close(fd);
+            sys.close(fd);
         };
     }
 }
@@ -825,19 +859,11 @@ fn handleTask(s: *State, fd: i32, active: *std.atomic.Value(u32)) void {
     s.handle(fd);
 }
 
-const ucred = extern struct { pid: i32, uid: u32, gid: u32 };
-
-fn peerCred(fd: i32) ?ucred {
-    var cred: ucred = undefined;
-    var len: linux.socklen_t = @sizeOf(ucred);
-    const rc = linux.getsockopt(fd, linux.SOL.SOCKET, linux.SO.PEERCRED, std.mem.asBytes(&cred), &len);
-    if (linux.errno(rc) != .SUCCESS or len != @sizeOf(ucred)) return null;
-    return cred;
-}
-
-/// "mnt:[4026531841]" for `pid`, or null if it can't be read (for example
-/// when the peer is in a pid namespace we can't see into).
+/// Linux: "mnt:[4026531841]" for `pid`, or null if it can't be read (for
+/// example when the peer is in a pid namespace we can't see into).
 fn mountNamespace(buf: []u8, pid: i32) ?[]const u8 {
+    if (!sys.is_linux) return null;
+    const linux = std.os.linux;
     var path_buf: [64]u8 = undefined;
     const path = std.fmt.bufPrintSentinel(&path_buf, "/proc/{d}/ns/mnt", .{pid}, 0) catch return null;
     const rc = linux.readlink(path, buf.ptr, buf.len);
@@ -845,39 +871,41 @@ fn mountNamespace(buf: []u8, pid: i32) ?[]const u8 {
     return buf[0..rc];
 }
 
-fn sameMountNamespace(pid: i32, own: []const u8) bool {
+/// Elsewhere there are no mount namespaces to tell apart.
+fn sameMountNamespace(pid: ?i32, own: []const u8) bool {
+    if (!sys.is_linux) return true;
     var buf: [64]u8 = undefined;
-    const ns = mountNamespace(&buf, pid) orelse return false;
+    const ns = mountNamespace(&buf, pid orelse return false) orelse return false;
     return own.len > 0 and std.mem.eql(u8, ns, own);
 }
 
-fn setTimeouts(fd: i32) void {
-    const tv: linux.timeval = .{ .sec = client_timeout_s, .usec = 0 };
-    _ = linux.setsockopt(fd, linux.SOL.SOCKET, linux.SO.RCVTIMEO, std.mem.asBytes(&tv), @sizeOf(linux.timeval));
-    _ = linux.setsockopt(fd, linux.SOL.SOCKET, linux.SO.SNDTIMEO, std.mem.asBytes(&tv), @sizeOf(linux.timeval));
-}
-
 fn connectBlocking(path: [:0]const u8) ?i32 {
-    const rc = linux.socket(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0);
-    if (linux.errno(rc) != .SUCCESS) return null;
-    const fd: i32 = @intCast(rc);
-    var addr: linux.sockaddr.un = .{ .path = @splat(0) };
-    @memcpy(addr.path[0..path.len], path);
-    if (linux.errno(linux.connect(fd, &addr, @sizeOf(linux.sockaddr.un))) != .SUCCESS) {
-        _ = linux.close(fd);
+    const fd = sys.socket(false) catch return null;
+    sys.connect(fd, path) catch {
+        sys.close(fd);
         return null;
-    }
+    };
     return fd;
 }
 
-test relevant {
-    try std.testing.expect(relevant(.work, "main.zig"));
-    try std.testing.expect(relevant(.work, null));
-    try std.testing.expect(relevant(.git, "index"));
-    try std.testing.expect(relevant(.git, "HEAD"));
-    try std.testing.expect(!relevant(.git, "index.lock"));
-    try std.testing.expect(!relevant(.git, "FETCH_HEAD"));
-    try std.testing.expect(!relevant(.git, "objects"));
-    try std.testing.expect(relevant(.refs, "main"));
-    try std.testing.expect(!relevant(.refs, "main.lock"));
+test "event relevance" {
+    var s: State = undefined;
+    s.global_names = .empty;
+    try std.testing.expect(s.relevant(.work, "main.zig"));
+    try std.testing.expect(s.relevant(.work, null));
+    try std.testing.expect(s.relevant(.git, "index"));
+    try std.testing.expect(s.relevant(.git, "HEAD"));
+    try std.testing.expect(!s.relevant(.git, "index.lock"));
+    try std.testing.expect(!s.relevant(.git, "FETCH_HEAD"));
+    try std.testing.expect(!s.relevant(.git, "objects"));
+    try std.testing.expect(s.relevant(.refs, "main"));
+    try std.testing.expect(!s.relevant(.refs, "main.lock"));
+    try std.testing.expect(!s.relevant(.global, ".bash_history"));
+
+    try std.testing.expect(s.rebuildsWatches(.git, "index"));
+    try std.testing.expect(!s.rebuildsWatches(.git, "HEAD"));
+    try std.testing.expect(s.rebuildsWatches(.work, ".gitignore"));
+    try std.testing.expect(!s.rebuildsWatches(.work, "main.zig"));
+    try std.testing.expect(s.rebuildsWatches(.rules, null));
+    try std.testing.expect(!s.rebuildsWatches(.file, null));
 }

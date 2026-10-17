@@ -1,13 +1,12 @@
 //! Daemon tests: run the real `buta daemon` and check every prompt it
 //! serves against what `buta prompt` computes on its own, across a long
 //! sequence of git operations. The daemon may only ever be faster, never
-//! different. Linux only; the git-driven tests are skipped without git.
+//! different. Linux and macOS; the git-driven tests are skipped without git.
 
 const std = @import("std");
-const builtin = @import("builtin");
 const build_options = @import("build_options");
+const sys = @import("sys");
 const testing = std.testing;
-const linux = std.os.linux;
 const io = testing.io;
 const gpa = testing.allocator;
 
@@ -52,20 +51,33 @@ const Harness = struct {
     daemon: ?std.process.Child = null,
 
     fn init() !Harness {
-        if (builtin.os.tag != .linux) return error.SkipZigTest;
+        if (!sys.supported) return error.SkipZigTest;
         var tmp = testing.tmpDir(.{});
         errdefer tmp.cleanup();
         const root = try tmp.dir.realPathFileAlloc(io, ".", gpa);
         errdefer gpa.free(root);
-        const socket = try std.fs.path.join(gpa, &.{ root, "d.sock" });
+        // Socket paths are short (103 bytes on macOS): fall back to /tmp
+        // when the test directory is deep.
+        var socket = try std.fs.path.join(gpa, &.{ root, "d.sock" });
+        if (socket.len > sys.max_socket_path) {
+            gpa.free(socket);
+            var id: [8]u8 = undefined;
+            io.random(&id);
+            socket = try std.fmt.allocPrint(gpa, "/tmp/buta-test-{x}.sock", .{std.mem.readInt(u64, &id, .little)});
+        }
         errdefer gpa.free(socket);
-        if (socket.len >= 108) return error.SkipZigTest; // sun_path limit
         try tmp.dir.writeFile(io, .{ .sub_path = "c.zon", .data = config });
         return .{ .tmp = tmp, .root = root, .socket = socket, .config = try std.fs.path.join(gpa, &.{ root, "c.zon" }) };
     }
 
     fn deinit(h: *Harness) void {
         h.stop();
+        if (std.mem.startsWith(u8, h.socket, "/tmp/")) {
+            std.Io.Dir.cwd().deleteFile(io, h.socket) catch {};
+            const lock = std.fmt.allocPrint(gpa, "{s}.lock", .{h.socket}) catch return;
+            defer gpa.free(lock);
+            std.Io.Dir.cwd().deleteFile(io, lock) catch {};
+        }
         gpa.free(h.config);
         gpa.free(h.socket);
         gpa.free(h.root);
@@ -73,7 +85,7 @@ const Harness = struct {
     }
 
     fn env(h: *Harness, map: *std.process.Environ.Map, use_daemon: bool) !void {
-        try map.put("PATH", testing.environ.getPosix("PATH") orelse "/usr/bin:/bin");
+        try map.put("PATH", testPath());
         try map.put("HOME", h.root);
         try map.put("BUTA_CONFIG", h.config);
         try map.put("BUTA_SOCKET", if (use_daemon) h.socket else "");
@@ -105,11 +117,15 @@ const Harness = struct {
     }
 
     fn start(h: *Harness) !void {
+        return h.startFrom(try butaPath());
+    }
+
+    fn startFrom(h: *Harness, exe: []const u8) !void {
         var map: std.process.Environ.Map = .init(gpa);
         defer map.deinit();
         try h.env(&map, true);
         h.daemon = try std.process.spawn(io, .{
-            .argv = &.{ try butaPath(), "daemon" },
+            .argv = &.{ exe, "daemon" },
             .environ_map = &map,
             .stdin = .ignore,
             .stdout = .ignore,
@@ -167,6 +183,21 @@ const Harness = struct {
                 return error.DaemonDisagrees;
             }
         }
+    }
+
+    /// Whether `buta daemon status` reports a running daemon.
+    fn running(h: *Harness) !bool {
+        const r = try h.run(&.{ try butaPath(), "daemon", "status" }, "", true);
+        defer r.deinit();
+        return r.code == 0;
+    }
+
+    fn waitUntil(h: *Harness, want_running: bool) !void {
+        for (0..300) |_| {
+            if (try h.running() == want_running) return;
+            try io.sleep(.fromMilliseconds(10), .awake);
+        }
+        return error.Timeout;
     }
 
     fn stats(h: *Harness) !struct { hits: u64, misses: u64 } {
@@ -288,6 +319,64 @@ test "the daemon's answers always match a local computation" {
     try testing.expect(s.misses > 0);
 }
 
+test "untracked files and ignore rules: the daemon sees every change" {
+    if (!haveGit()) return error.SkipZigTest;
+    var h = try Harness.init();
+    defer h.deinit();
+    try h.start();
+
+    try h.tmp.dir.createDirPath(io, "r");
+    try h.git("r", &.{ "init", "-q", "-b", "main" });
+    try h.write("r/.gitignore", "*.o\nbuild/\n");
+    try h.write("r/src/a.c", "a\n");
+    try h.git("r", &.{ "add", "." });
+    try h.git("r", &.{ "commit", "-qm", "base" });
+    try h.check("r", "clean");
+
+    try h.write("r/new.txt", "x\n");
+    try h.check("r", "untracked file");
+    try h.write("r/src/a.o", "x\n");
+    try h.check("r", "ignored file");
+    try h.write("r/build/out/x.bin", "x\n");
+    try h.check("r", "file in an ignored directory");
+    try h.tmp.dir.createDirPath(io, "r/u/v/w");
+    try h.check("r", "empty untracked directories");
+    try h.write("r/u/v/w/deep.txt", "x\n");
+    try h.check("r", "file deep in a new untracked directory");
+    try h.tmp.dir.deleteFile(io, "r/u/v/w/deep.txt");
+    try h.check("r", "and deleted again");
+
+    // Changing the rules changes what is ignored, and what is watched.
+    try h.write("r/.gitignore", "*.o\n");
+    try h.check("r", "un-ignore build/");
+    // Normal mode counts build/ once, so only emptying it changes the count.
+    try h.tmp.dir.deleteFile(io, "r/build/out/x.bin");
+    try h.check("r", "empty the formerly ignored directory");
+    try h.write("r/build/out/y.bin", "y\n");
+    try h.check("r", "write in it again");
+    try h.write("r/.gitignore", "*.o\nbuild/\nnew.txt\n");
+    try h.check("r", "ignore again");
+    try h.write("r/src/.gitignore", "!a.o\n");
+    try h.check("r", "a nested .gitignore");
+    try h.write("r/.git/info/exclude", "u/\n");
+    try h.check("r", "info/exclude");
+    try h.git("r", &.{ "config", "status.showUntrackedFiles", "all" });
+    try h.check("r", "showUntrackedFiles=all");
+
+    // The global excludes file ($HOME/.config/git/ignore; HOME is the
+    // harness root), created where not even its directory existed.
+    // It hides the untracked src/.gitignore, then lets it show again.
+    const before = try h.prompt("r", false);
+    defer before.deinit();
+    try h.write(".config/git/ignore", ".gitignore\n");
+    try h.check("r", "global excludes file created");
+    const after = try h.prompt("r", false);
+    defer after.deinit();
+    try testing.expect(!std.mem.eql(u8, before.stdout, after.stdout)); // the step matters
+    try h.write(".config/git/ignore", "*.bin\n");
+    try h.check("r", "global excludes file changed");
+}
+
 test "without a daemon, and after it stops, prompts are computed locally" {
     if (!haveGit()) return error.SkipZigTest;
     var h = try Harness.init();
@@ -319,15 +408,81 @@ test "the daemon hangs up on a client from another build" {
     var h = try Harness.init();
     defer h.deinit();
     try h.start();
-    const fd = try connectTo(h.socket);
-    defer _ = linux.close(fd);
-    // Right magic, wrong fingerprint.
+    try testing.expect(try sendForeignHello(h.socket));
+    try testing.expect(try h.running()); // its executable is unchanged: it stays
+}
+
+/// Right magic, wrong fingerprint. True if the daemon closed without answering.
+fn sendForeignHello(path: []const u8) !bool {
+    const fd = try connectTo(path);
+    defer sys.close(fd);
     const hello = "BUTA" ++ "\x00" ** 8 ++ "\x01\x00\x00\x00" ++ "\x00";
-    try testing.expectEqual(hello.len, linux.write(fd, hello, hello.len));
+    if (!sys.writeAll(fd, hello)) return error.Write;
     var buf: [16]u8 = undefined;
     // No answer: EOF, or a reset because the daemon closed with our bytes unread.
-    const rc = linux.read(fd, &buf, buf.len);
-    try testing.expect(rc == 0 or linux.errno(rc) == .CONNRESET);
+    const n = sys.read(fd, &buf) catch return true;
+    return n == 0;
+}
+
+test "after an upgrade, the old daemon makes way for the new one" {
+    var h = try Harness.init();
+    defer h.deinit();
+    // Run the daemon from a copy, then replace the copy, as an upgrade does.
+    const data = try std.Io.Dir.cwd().readFileAlloc(io, try butaPath(), gpa, .unlimited);
+    defer gpa.free(data);
+    try h.write("old/buta", data);
+    try h.write("new/buta", data);
+    for ([_][]const u8{ "old/buta", "new/buta" }) |p| {
+        const f = try h.tmp.dir.openFile(io, p, .{});
+        defer f.close(io);
+        try f.setPermissions(io, .fromMode(0o755));
+    }
+    const old = try std.fs.path.join(gpa, &.{ h.root, "old/buta" });
+    defer gpa.free(old);
+    try h.startFrom(old);
+    try h.tmp.dir.rename("new/buta", h.tmp.dir, "old/buta", io);
+
+    // A client of another build: the replaced daemon exits.
+    try testing.expect(try sendForeignHello(h.socket));
+    try h.waitUntil(false);
+    var child = h.daemon.?;
+    h.daemon = null;
+    _ = try child.wait(io);
+}
+
+test "a prompt starts the daemon when none runs, and doesn't keep retrying" {
+    if (!haveGit()) return error.SkipZigTest;
+    var h = try Harness.init();
+    defer h.deinit();
+    try h.tmp.dir.createDirPath(io, "r");
+    try h.git("r", &.{ "init", "-q", "-b", "main" });
+    defer if (h.run(&.{ butaPath() catch unreachable, "daemon", "stop" }, "", true)) |r| r.deinit() else |_| {};
+
+    try testing.expect(!try h.running());
+    const first = try h.prompt("r", true); // computed locally; starts the daemon
+    first.deinit();
+    try h.waitUntil(true);
+    try h.check("r", "served by the started daemon");
+
+    // Stopped by hand: the next prompts don't restart it right away.
+    const r = try h.run(&.{ try butaPath(), "daemon", "stop" }, "", true);
+    r.deinit();
+    for (0..3) |_| {
+        const p = try h.prompt("r", true);
+        p.deinit();
+    }
+    try io.sleep(.fromMilliseconds(200), .awake);
+    try testing.expect(!try h.running());
+}
+
+test "with `.daemon = .off` the prompt never asks or starts one" {
+    var h = try Harness.init();
+    defer h.deinit();
+    try h.write("c.zon", ".{ .glyphs = .ascii, .order = .{ .git_branch }, .daemon = .off }");
+    const p = try h.prompt("", true);
+    p.deinit();
+    try io.sleep(.fromMilliseconds(200), .awake);
+    try testing.expect(!try h.running());
 }
 
 test "a daemon that never answers costs at most the deadline" {
@@ -338,12 +493,9 @@ test "a daemon that never answers costs at most the deadline" {
     try h.write("c.zon", ".{ .glyphs = .ascii, .order = .{ .dir, .git_branch, .git_status }, .timeout_ms = 80 }");
 
     // Listens, but never accepts: connecting and sending still succeed.
-    const fd = linux.socket(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0);
-    defer _ = linux.close(@intCast(fd));
-    var addr: linux.sockaddr.un = .{ .path = @splat(0) };
-    @memcpy(addr.path[0..h.socket.len], h.socket);
-    try testing.expectEqual(@as(usize, 0), linux.bind(@intCast(fd), @ptrCast(&addr), @sizeOf(linux.sockaddr.un)));
-    try testing.expectEqual(@as(usize, 0), linux.listen(@intCast(fd), 8));
+    const fd = try sys.socket(false);
+    defer sys.close(fd);
+    try sys.listen(fd, h.socket);
 
     const t0 = std.Io.Clock.Timestamp.now(io, .awake);
     const r = try h.run(&.{ try butaPath(), "prompt" }, "r", true);
@@ -359,11 +511,17 @@ test "a daemon that never answers costs at most the deadline" {
 }
 
 fn connectTo(path: []const u8) !i32 {
-    const rc = linux.socket(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0);
-    if (linux.errno(rc) != .SUCCESS) return error.Socket;
-    const fd: i32 = @intCast(rc);
-    var addr: linux.sockaddr.un = .{ .path = @splat(0) };
-    @memcpy(addr.path[0..path.len], path);
-    if (linux.errno(linux.connect(fd, &addr, @sizeOf(linux.sockaddr.un))) != .SUCCESS) return error.Connect;
+    const fd = try sys.socket(false);
+    errdefer sys.close(fd);
+    try sys.connect(fd, path);
     return fd;
+}
+
+/// The test runner's $PATH, for finding git and the shells.
+fn testPath() []const u8 {
+    const S = struct {
+        var map: ?std.process.Environ.Map = null;
+    };
+    if (S.map == null) S.map = testing.environ.createMap(std.heap.page_allocator) catch return "/usr/bin:/bin";
+    return S.map.?.get("PATH") orelse "/usr/bin:/bin";
 }

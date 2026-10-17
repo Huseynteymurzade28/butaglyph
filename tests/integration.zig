@@ -2,6 +2,7 @@
 //! real shells, against fixture directories.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const build_options = @import("build_options");
 const testing = std.testing;
 const io = testing.io;
@@ -36,7 +37,7 @@ const Env = []const [2][]const u8;
 fn run(argv: []const []const u8, cwd: ?[]const u8, env: Env) !Result {
     var map: std.process.Environ.Map = .init(gpa);
     defer map.deinit();
-    try map.put("PATH", testing.environ.getPosix("PATH") orelse "/usr/bin:/bin");
+    try map.put("PATH", testPath());
     try map.put("HOME", "/nonexistent-home");
     try map.put("BUTA_CONFIG", "/nonexistent/config.zon");
     try map.put("BUTA", try butaPath());
@@ -127,14 +128,38 @@ test "bad usage exits 2 and prints usage on stderr" {
 }
 
 test "init scripts embed the binary path and parse in their shell" {
-    for ([_][]const u8{ "bash", "zsh", "fish" }) |shell| {
+    // POSIX shells on Windows get the path with forward slashes.
+    var slashed_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const slashed = slashed_buf[0..(try butaPath()).len];
+    @memcpy(slashed, buta);
+    if (builtin.os.tag == .windows) std.mem.replaceScalar(u8, slashed, '\\', '/');
+
+    for ([_][]const u8{ "bash", "zsh", "fish", "powershell" }) |shell| {
         const r = try run(&.{ try butaPath(), "init", shell }, null, &.{});
         defer r.deinit();
         try testing.expectEqual(@as(u8, 0), r.code);
-        try testing.expect(std.mem.indexOf(u8, r.stdout, buta) != null);
+        const want = if (std.mem.eql(u8, shell, "powershell")) buta else slashed;
+        try testing.expect(std.mem.indexOf(u8, r.stdout, want) != null);
         try testing.expect(std.mem.indexOf(u8, r.stdout, "::BUTA::") == null);
-        if (!haveShell(shell)) continue;
-        const check = try run(&.{ shell, "-n", "-c", r.stdout }, null, &.{});
+        const check = if (std.mem.eql(u8, shell, "powershell")) blk: {
+            if (!haveShell("pwsh")) continue;
+            var tmp = testing.tmpDir(.{});
+            defer tmp.cleanup();
+            try tmp.dir.writeFile(io, .{ .sub_path = "init.ps1", .data = r.stdout });
+            const script = try tmp.dir.realPathFileAlloc(io, "init.ps1", gpa);
+            defer gpa.free(script);
+            // The parser's verdict, without running anything.
+            const command = try std.fmt.allocPrint(gpa,
+                \\$errors = $null
+                \\[void][System.Management.Automation.Language.Parser]::ParseFile('{s}', [ref]$null, [ref]$errors)
+                \\if ($errors) {{ $errors | ForEach-Object {{ [Console]::Error.WriteLine($_.ToString()) }}; exit 1 }}
+            , .{script});
+            defer gpa.free(command);
+            break :blk try run(&.{ "pwsh", "-NoProfile", "-NonInteractive", "-Command", command }, null, &.{});
+        } else blk: {
+            if (!haveShell(shell)) continue;
+            break :blk try run(&.{ shell, "-n", "-c", r.stdout }, null, &.{});
+        };
         defer check.deinit();
         if (check.code != 0) std.debug.print("{s}: {s}\n", .{ shell, check.stderr });
         try testing.expectEqual(@as(u8, 0), check.code);
@@ -153,8 +178,8 @@ test "escape sequences are always wrapped" {
     const cfg = try std.fs.path.join(gpa, &.{ root, "all.zon" });
     defer gpa.free(cfg);
     try tmp.dir.writeFile(io, .{ .sub_path = "all.zon", .data =
-    \\.{ .order = .{ .dir, .git_branch, .duration, .status, .jobs, .line_break, .character },
-    \\   .dir = .{ .style = .{ .fg = "#ff8800", .bg = "17", .bold = true, .underline = true } } }
+        \\.{ .order = .{ .dir, .git_branch, .duration, .status, .jobs, .line_break, .character },
+        \\   .dir = .{ .style = .{ .fg = "#ff8800", .bg = "17", .bold = true, .underline = true } } }
     });
     for ([_]struct { []const u8, u8 }{ .{ "bash", '\\' }, .{ "zsh", '%' } }) |case| {
         const r = try run(&(.{ try butaPath(), "prompt", "--shell", case[0] } ++ args), root, &.{.{ "BUTA_CONFIG", cfg }});
@@ -356,4 +381,13 @@ test "fast modules finish well before the deadline" {
     try testing.expect(std.mem.indexOf(u8, visible(r.stdout, &buf), "quick") != null);
     // The deadline is an upper bound, not a wait: a 3 s budget must not cost 3 s.
     try testing.expect(took < 1000);
+}
+
+/// The test runner's $PATH, for finding git and the shells.
+fn testPath() []const u8 {
+    const S = struct {
+        var map: ?std.process.Environ.Map = null;
+    };
+    if (S.map == null) S.map = testing.environ.createMap(std.heap.page_allocator) catch return "/usr/bin:/bin";
+    return S.map.?.get("PATH") orelse "/usr/bin:/bin";
 }

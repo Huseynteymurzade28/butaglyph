@@ -56,15 +56,22 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(integration_tests).step);
 
     // Runs the real daemon and checks its answers against local computation.
+    const sys = b.createModule(.{ .root_source_file = b.path("src/sys.zig"), .target = target, .optimize = optimize });
     const daemon_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/daemon.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{.{ .name = "build_options", .module = it_options.createModule() }},
+            .imports = &.{
+                .{ .name = "build_options", .module = it_options.createModule() },
+                .{ .name = "sys", .module = sys },
+            },
         }),
     });
-    test_step.dependOn(&b.addRunArtifact(daemon_tests).step);
+    // The daemon exists on Linux and macOS only.
+    if (target.result.os.tag == .linux or target.result.os.tag.isDarwin()) {
+        test_step.dependOn(&b.addRunArtifact(daemon_tests).step);
+    }
 
     // The benchmark always measures a ReleaseFast binary, whatever -Doptimize says.
     const fast_git = b.createModule(.{

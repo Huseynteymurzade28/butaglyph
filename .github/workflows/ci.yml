@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Shells for the integration tests
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -yq zsh fish
+      - name: Format
+        if: runner.os == 'Linux'
+        run: zig fmt --check src tests bench build.zig
+      # Linux: inotify daemon; macOS: kqueue daemon; Windows: no daemon.
+      - name: Test
+        run: zig build test --summary all
+      - name: Cross-compile every release target
+        if: runner.os == 'Linux'
+        run: |
+          for t in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows; do
+            zig build -Doptimize=ReleaseFast -Dtarget=$t -p "out/$t"
+          done

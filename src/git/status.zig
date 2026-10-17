@@ -4,10 +4,12 @@
 //! * modified / deleted: index vs working tree (lstat, then content hash
 //!   when the stat data is inconclusive, as git does)
 //! * conflicted: paths with stage 1-3 index entries
+//! * untracked:  see untracked.zig
 //! * ahead / behind: commits on each side of HEAD...upstream
 //!
-//! Untracked files are not reported (that needs .gitignore handling and a
-//! full tree walk; it belongs with the Phase 3 daemon's inotify cache).
+//! Configuration is read from the repository and the user's global files
+//! (`~/.gitconfig`, `$XDG_CONFIG_HOME/git/config`, or `$GIT_CONFIG_GLOBAL`),
+//! not from the system file, and `[include]` is not followed.
 //! Rename detection is not done: a staged rename counts as two paths, as
 //! with `git status --no-renames`. Clean/smudge filters (autocrlf, LFS) are
 //! not applied when hashing.
@@ -22,12 +24,16 @@ const object = @import("object.zig");
 const index_mod = @import("index.zig");
 const odb_mod = @import("odb.zig");
 const GitConfig = @import("config.zig").Config;
+const ignore = @import("ignore.zig");
+const untracked_mod = @import("untracked.zig");
+const builtin = @import("builtin");
 
 pub const Status = struct {
     staged: u32 = 0,
     modified: u32 = 0,
     deleted: u32 = 0,
     conflicted: u32 = 0,
+    untracked: u32 = 0,
     /// null when there is no upstream or the history walk gave up.
     ahead: ?u32 = null,
     behind: ?u32 = null,
@@ -35,13 +41,129 @@ pub const Status = struct {
 
 pub const Options = struct {
     worktree: bool = true,
+    /// Count untracked files (unless `status.showUntrackedFiles` is `no`).
+    untracked: bool = true,
     ahead_behind: bool = true,
     /// Give up on ahead/behind after visiting this many commits.
     max_commits: u32 = 20_000,
+    global: Global = .{},
+    /// For the daemon, see `untracked.Options`.
+    dirs: ?*std.ArrayList([]const u8) = null,
+    ignore_files: ?*std.ArrayList([]const u8) = null,
+};
+
+/// Where the user's global git files are. The caller fills this in from
+/// the environment ($HOME, $XDG_CONFIG_HOME, $GIT_CONFIG_GLOBAL), so that
+/// the reader itself never looks at the process environment.
+pub const Global = struct {
+    home: ?[]const u8 = null,
+    xdg_config_home: ?[]const u8 = null,
+    /// $GIT_CONFIG_GLOBAL: replaces both global config files.
+    config_global: ?[]const u8 = null,
+
+    /// The global config files, highest precedence first.
+    pub fn configFiles(g: Global, arena: Allocator) ![]const []const u8 {
+        var list: std.ArrayList([]const u8) = .empty;
+        if (g.config_global) |p| {
+            if (p.len > 0) try list.append(arena, p);
+            return list.items;
+        }
+        if (g.home) |h| try list.append(arena, try std.fmt.allocPrint(arena, "{s}/.gitconfig", .{h}));
+        if (try g.xdgFile(arena, "config")) |p| try list.append(arena, p);
+        return list.items;
+    }
+
+    fn xdgFile(g: Global, arena: Allocator, name: []const u8) !?[]const u8 {
+        if (g.xdg_config_home) |x| if (x.len > 0) return try std.fmt.allocPrint(arena, "{s}/git/{s}", .{ x, name });
+        const h = g.home orelse return null;
+        return try std.fmt.allocPrint(arena, "{s}/.config/git/{s}", .{ h, name });
+    }
+
+    /// `core.excludesFile` (with `~/` expanded), else `$XDG_CONFIG_HOME/git/ignore`.
+    fn excludesFile(g: Global, arena: Allocator, configs: Configs) !?[]const u8 {
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        if (configs.get("core", null, "excludesfile", &buf)) |v| {
+            if (v.len == 0) return null;
+            if (std.mem.startsWith(u8, v, "~/")) {
+                const h = g.home orelse return null;
+                return try std.fmt.allocPrint(arena, "{s}/{s}", .{ h, v[2..] });
+            }
+            return try arena.dupe(u8, v);
+        }
+        return g.xdgFile(arena, "ignore");
+    }
+};
+
+/// The files outside the repository that status depends on: the global
+/// config files and the global excludes file (whether or not they exist).
+pub fn externalFiles(io: Io, arena: Allocator, repo: Repo, global: Global) ![]const []const u8 {
+    const configs = try loadConfigs(io, arena, repo, global);
+    var list: std.ArrayList([]const u8) = .empty;
+    try list.appendSlice(arena, try global.configFiles(arena));
+    if (try global.excludesFile(arena, configs)) |p| try list.append(arena, p);
+    return list.items;
+}
+
+/// The repository's config followed by the global ones; the first file
+/// that sets a key wins (git reads them in the opposite order, last wins).
+const Configs = struct {
+    files: []const GitConfig,
+
+    fn get(c: Configs, section: []const u8, subsection: ?[]const u8, key: []const u8, buf: []u8) ?[]const u8 {
+        for (c.files) |f| if (f.get(section, subsection, key, buf)) |v| return v;
+        return null;
+    }
+
+    fn getBool(c: Configs, section: []const u8, key: []const u8, default: bool) bool {
+        var buf: [16]u8 = undefined;
+        return parseBool(c.get(section, null, key, &buf) orelse return default) orelse default;
+    }
+};
+
+fn parseBool(v: []const u8) ?bool {
+    for ([_][]const u8{ "true", "yes", "on", "1" }) |t| if (std.ascii.eqlIgnoreCase(v, t)) return true;
+    for ([_][]const u8{ "false", "no", "off", "0", "" }) |f| if (std.ascii.eqlIgnoreCase(v, f)) return false;
+    return null;
+}
+
+fn loadConfigs(io: Io, arena: Allocator, repo: Repo, global: Global) !Configs {
+    var files: std.ArrayList(GitConfig) = .empty;
+    try files.append(arena, try loadConfig(io, arena, repo));
+    for (try global.configFiles(arena)) |p| {
+        const text = Io.Dir.cwd().readFileAlloc(io, p, arena, .limited(1024 * 1024)) catch continue;
+        try files.append(arena, .{ .text = text });
+    }
+    return .{ .files = files.items };
+}
+
+/// How index stat data is compared with the work tree (core.* settings).
+const StatRules = struct {
+    /// core.fileMode: the executable bit is meaningful.
+    file_mode: bool,
+    /// core.symlinks: symlinks are checked out as symlinks (else as files
+    /// holding the target).
+    symlinks: bool,
+    /// core.trustctime
+    trust_ctime: bool,
+    /// core.checkStat = minimal: only mtime (seconds) and size.
+    minimal: bool,
+
+    fn load(configs: Configs) StatRules {
+        var buf: [16]u8 = undefined;
+        const windows = builtin.os.tag == .windows;
+        return .{
+            // Windows has no executable bit, whatever the repository says.
+            .file_mode = !windows and configs.getBool("core", "filemode", true),
+            .symlinks = configs.getBool("core", "symlinks", !windows),
+            .trust_ctime = configs.getBool("core", "trustctime", true),
+            .minimal = if (configs.get("core", null, "checkstat", &buf)) |v| std.ascii.eqlIgnoreCase(v, "minimal") else false,
+        };
+    }
 };
 
 pub fn compute(io: Io, arena: Allocator, repo: Repo, opts: Options) !Status {
-    const config = try loadConfig(io, arena, repo);
+    const configs = try loadConfigs(io, arena, repo, opts.global);
+    const config = configs.files[0];
     var buf: [256]u8 = undefined;
     if (config.get("extensions", null, "objectformat", &buf)) |fmt| {
         if (!std.ascii.eqlIgnoreCase(fmt, "sha1")) return error.UnsupportedObjectFormat;
@@ -58,9 +180,10 @@ pub fn compute(io: Io, arena: Allocator, repo: Repo, opts: Options) !Status {
     var st: Status = .{};
     const head_tree: ?Oid = if (head) |h| (try object.parseCommit((try readKind(&odb, h, .commit)).data)).tree else null;
     try compareHeadToIndex(&odb, arena, head_tree, loaded.index, &st);
-    if (opts.worktree) try compareIndexToWorktree(io, repo, loaded, &st);
+    if (opts.worktree) try compareIndexToWorktree(io, repo, loaded, StatRules.load(configs), &st);
+    if (opts.untracked) st.untracked = try countUntracked(io, arena, repo, loaded.index.entries, configs, opts);
     if (opts.ahead_behind) if (head) |h| {
-        if (try upstreamOid(io, repo, config)) |up| {
+        if (try upstreamOid(io, repo, configs)) |up| {
             if (try aheadBehind(&odb, arena, h, up, opts.max_commits)) |ab| {
                 st.ahead = ab[0];
                 st.behind = ab[1];
@@ -77,6 +200,82 @@ fn loadConfig(io: Io, arena: Allocator, repo: Repo) !GitConfig {
         else => |e| return e,
     };
     return .{ .text = text };
+}
+
+/// What the daemon must watch so that no change to `status` goes unseen.
+/// Paths are absolute.
+pub const WatchList = struct {
+    /// The work tree directories holding tracked files, and (unless
+    /// untracked files are off) every directory that is not ignored.
+    dirs: []const []const u8,
+    /// Regular tracked files (for watchers that can't see writes to the
+    /// files in a watched directory).
+    files: []const []const u8,
+    /// The `.gitignore` files found.
+    ignore_files: []const []const u8,
+};
+
+pub fn watchList(io: Io, arena: Allocator, repo: Repo, global: Global, with_files: bool) !WatchList {
+    const configs = try loadConfigs(io, arena, repo, global);
+    const loaded = try loadIndex(io, arena, repo);
+    var dirs: std.ArrayList([]const u8) = .empty;
+    var ignore_files: std.ArrayList([]const u8) = .empty;
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+
+    // Ancestors of tracked files first: they matter even inside ignored directories.
+    try seen.put(arena, "", {});
+    for (loaded.index.entries) |e| {
+        var end = std.mem.lastIndexOfScalar(u8, e.path, '/') orelse continue;
+        while (true) {
+            const gop = try seen.getOrPut(arena, e.path[0 .. end + 1]);
+            if (gop.found_existing) break; // its ancestors are in already
+            end = std.mem.lastIndexOfScalar(u8, e.path[0..end], '/') orelse break;
+        }
+    }
+    _ = try countUntracked(io, arena, repo, loaded.index.entries, configs, .{ .global = global, .dirs = &dirs, .ignore_files = &ignore_files });
+    for (dirs.items) |d| try seen.put(arena, d, {});
+
+    var abs_dirs: std.ArrayList([]const u8) = .empty;
+    var it = seen.keyIterator();
+    while (it.next()) |rel| try abs_dirs.append(arena, try join(arena, repo.work_tree, rel.*));
+    for (ignore_files.items) |*f| f.* = try join(arena, repo.work_tree, f.*);
+
+    var files: std.ArrayList([]const u8) = .empty;
+    if (with_files) for (loaded.index.entries) |e| {
+        // Symlinks and submodules change through their directory's entries.
+        if (e.stage != 0 or (e.mode != 0o100644 and e.mode != 0o100755)) continue;
+        try files.append(arena, try join(arena, repo.work_tree, e.path));
+    };
+    return .{ .dirs = abs_dirs.items, .files = files.items, .ignore_files = ignore_files.items };
+}
+
+fn join(arena: Allocator, root: []const u8, rel: []const u8) ![]const u8 {
+    const r = std.mem.trimEnd(u8, rel, "/");
+    if (r.len == 0) return root;
+    return std.fmt.allocPrint(arena, "{s}/{s}", .{ std.mem.trimEnd(u8, root, "/"), r });
+}
+
+fn countUntracked(io: Io, arena: Allocator, repo: Repo, entries: []const index_mod.Entry, configs: Configs, opts: Options) !u32 {
+    var buf: [16]u8 = undefined;
+    const mode: untracked_mod.Mode = if (configs.get("status", null, "showuntrackedfiles", &buf)) |v|
+        std.meta.stringToEnum(untracked_mod.Mode, v) orelse if (parseBool(v)) |b| (if (b) .normal else .no) else .normal
+    else
+        .normal;
+    var repo_wide: [2]?ignore.List = .{ null, null };
+    const info = try std.fmt.allocPrint(arena, "{s}/info/exclude", .{repo.common_dir});
+    const sources = [_]?[]const u8{ info, try opts.global.excludesFile(arena, configs) };
+    for (&repo_wide, sources) |*list, source| {
+        const p = source orelse continue;
+        const text = Io.Dir.cwd().readFileAlloc(io, p, arena, .limited(1024 * 1024)) catch continue;
+        list.* = try ignore.List.parse(arena, "", text);
+    }
+    return untracked_mod.count(io, arena, repo.work_tree, entries, repo_wide, .{
+        // Watching needs the walk even when nothing is reported.
+        .mode = if (mode == .no and opts.dirs != null) .normal else mode,
+        .ignore_case = configs.getBool("core", "ignorecase", false),
+        .dirs = opts.dirs,
+        .ignore_files = opts.ignore_files,
+    });
 }
 
 const LoadedIndex = struct {
@@ -201,7 +400,7 @@ fn compareHeadToIndex(odb: *odb_mod.Odb, arena: Allocator, head_tree: ?Oid, inde
 const parallel_threshold = 2048;
 const max_workers = 8;
 
-fn compareIndexToWorktree(io: Io, repo: Repo, loaded: LoadedIndex, st: *Status) !void {
+fn compareIndexToWorktree(io: Io, repo: Repo, loaded: LoadedIndex, rules: StatRules, st: *Status) !void {
     var dir = try Io.Dir.cwd().openDir(io, repo.work_tree, .{});
     defer dir.close(io);
     const entries = loaded.index.entries;
@@ -211,7 +410,7 @@ fn compareIndexToWorktree(io: Io, repo: Repo, loaded: LoadedIndex, st: *Status) 
     const cpus = std.Thread.getCpuCount() catch 1;
     const workers = @max(1, @min(max_workers, cpus, entries.len / (parallel_threshold / 2)));
     if (entries.len < parallel_threshold or workers == 1) {
-        const r = try checkEntries(io, dir, entries, loaded.mtime_ns);
+        const r = try checkEntries(io, dir, entries, loaded.mtime_ns, rules);
         st.modified += r.modified;
         st.deleted += r.deleted;
         return;
@@ -222,15 +421,15 @@ fn compareIndexToWorktree(io: Io, repo: Repo, loaded: LoadedIndex, st: *Status) 
     for (0..workers) |w| {
         const part = entries[@min(entries.len, w * chunk)..@min(entries.len, (w + 1) * chunk)];
         if (w == 0) continue; // this thread takes chunk 0 below
-        futures[w] = io.concurrent(checkEntries, .{ io, dir, part, loaded.mtime_ns }) catch blk: {
-            const r = try checkEntries(io, dir, part, loaded.mtime_ns);
+        futures[w] = io.concurrent(checkEntries, .{ io, dir, part, loaded.mtime_ns, rules }) catch blk: {
+            const r = try checkEntries(io, dir, part, loaded.mtime_ns, rules);
             inline_counts.modified += r.modified;
             inline_counts.deleted += r.deleted;
             break :blk null;
         };
     }
     var first_err: ?anyerror = null;
-    const r0 = checkEntries(io, dir, entries[0..@min(entries.len, chunk)], loaded.mtime_ns) catch |e| e;
+    const r0 = checkEntries(io, dir, entries[0..@min(entries.len, chunk)], loaded.mtime_ns, rules) catch |e| e;
     // Always await every task before returning: they use `dir` and this frame.
     for (&futures) |*f| if (f.*) |*fut| {
         if (fut.await(io)) |r| {
@@ -246,7 +445,7 @@ fn compareIndexToWorktree(io: Io, repo: Repo, loaded: LoadedIndex, st: *Status) 
 
 const Counts = struct { modified: u32 = 0, deleted: u32 = 0 };
 
-fn checkEntries(io: Io, dir: Io.Dir, entries: []const index_mod.Entry, index_mtime_ns: i96) anyerror!Counts {
+fn checkEntries(io: Io, dir: Io.Dir, entries: []const index_mod.Entry, index_mtime_ns: i96, rules: StatRules) anyerror!Counts {
     var c: Counts = .{};
     for (entries) |*e| {
         if (e.stage != 0) continue; // counted as conflicted
@@ -256,7 +455,7 @@ fn checkEntries(io: Io, dir: Io.Dir, entries: []const index_mod.Entry, index_mti
             continue;
         }
         if (e.mode == 0o160000) continue; // submodule: not inspected
-        switch (try worktreeState(io, dir, e, index_mtime_ns)) {
+        switch (try worktreeState(io, dir, e, index_mtime_ns, rules)) {
             .clean => {},
             .modified => c.modified += 1,
             .deleted => c.deleted += 1,
@@ -267,20 +466,22 @@ fn checkEntries(io: Io, dir: Io.Dir, entries: []const index_mod.Entry, index_mti
 
 const WorktreeState = enum { clean, modified, deleted };
 
-fn worktreeState(io: Io, dir: Io.Dir, e: *const index_mod.Entry, index_mtime_ns: i96) !WorktreeState {
+fn worktreeState(io: Io, dir: Io.Dir, e: *const index_mod.Entry, index_mtime_ns: i96, rules: StatRules) !WorktreeState {
     const stat = dir.statFile(io, e.path, .{ .follow_symlinks = false }) catch |err| switch (err) {
         error.FileNotFound, error.NotDir => return .deleted,
         else => |x| return x,
     };
     const is_link = e.mode == 0o120000;
+    // Without core.symlinks a symlink is checked out as a file holding its target.
+    const link_as_file = is_link and !rules.symlinks;
     switch (stat.kind) {
-        .file => if (is_link) return .modified,
+        .file => if (is_link and !link_as_file) return .modified,
         .sym_link => if (!is_link) return .modified,
         .directory => return .deleted,
         else => return .modified,
     }
-    if (!is_link) {
-        const exec = stat.permissions.toMode() & 0o100 != 0;
+    if (!is_link and rules.file_mode) {
+        const exec = executable(stat);
         if (exec != (e.mode == 0o100755)) return .modified;
     }
     // A size change is decisive, except for entries git stored with size 0
@@ -289,9 +490,15 @@ fn worktreeState(io: Io, dir: Io.Dir, e: *const index_mod.Entry, index_mtime_ns:
 
     const mtime = splitTime(stat.mtime.nanoseconds);
     const ctime = splitTime(stat.ctime.nanoseconds);
-    const stat_matches = mtime[0] == e.mtime_s and mtime[1] == e.mtime_ns and
-        ctime[0] == e.ctime_s and ctime[1] == e.ctime_ns and
-        @as(u32, @truncate(stat.inode)) == e.ino and
+    // core.checkStat = minimal drops sub-second times and the inode. Git for
+    // Windows stores no inode and uses the creation time as ctime, which
+    // Windows' stat doesn't report, so neither is compared there.
+    const windows = builtin.os.tag == .windows;
+    const check_ctime = rules.trust_ctime and !windows;
+    const stat_matches = mtime[0] == e.mtime_s and
+        (rules.minimal or mtime[1] == e.mtime_ns) and
+        (!check_ctime or (ctime[0] == e.ctime_s and (rules.minimal or ctime[1] == e.ctime_ns))) and
+        (rules.minimal or windows or @as(u32, @truncate(stat.inode)) == e.ino) and
         @as(u32, @truncate(stat.size)) == e.size;
     // Racy git: a file modified in the same timestamp tick as the index was
     // written can look clean by stat alone.
@@ -299,8 +506,13 @@ fn worktreeState(io: Io, dir: Io.Dir, e: *const index_mod.Entry, index_mtime_ns:
     const racy = entry_mtime_ns >= index_mtime_ns;
     if (stat_matches and !racy) return .clean;
 
-    const oid = if (is_link) try hashLink(io, dir, e.path) else try hashFile(io, dir, e.path, stat.size);
+    const oid = if (is_link and !link_as_file) try hashLink(io, dir, e.path) else try hashFile(io, dir, e.path, stat.size);
     return if (oid.eql(e.oid)) .clean else .modified;
+}
+
+fn executable(stat: Io.File.Stat) bool {
+    if (builtin.os.tag == .windows) return false;
+    return stat.permissions.toMode() & 0o100 != 0;
 }
 
 fn splitTime(ns: i96) [2]u32 {
@@ -334,7 +546,7 @@ fn hashLink(io: Io, dir: Io.Dir, path: []const u8) !Oid {
 
 // ---------------------------------------------------------------- ahead/behind
 
-fn upstreamOid(io: Io, repo: Repo, config: GitConfig) !?Oid {
+fn upstreamOid(io: Io, repo: Repo, config: Configs) !?Oid {
     var head_buf: [512]u8 = undefined;
     var path_buf: [std.fs.max_path_bytes]u8 = undefined;
     const head_path = try std.fmt.bufPrint(&path_buf, "{s}/HEAD", .{repo.git_dir});

@@ -11,6 +11,7 @@ pub const Glyphs = struct {
     git_modified: []const u8,
     git_deleted: []const u8,
     git_conflicted: []const u8,
+    git_untracked: []const u8,
     git_ahead: []const u8,
     git_behind: []const u8,
     status: []const u8,
@@ -28,6 +29,7 @@ pub const nerd: Glyphs = .{
     .git_modified = "!",
     .git_deleted = "\u{2718}", // ✘
     .git_conflicted = "=",
+    .git_untracked = "?",
     .git_ahead = "\u{21e1}", // ⇡
     .git_behind = "\u{21e3}", // ⇣
     .status = "\u{f00d} ", // nf-fa-xmark
@@ -45,6 +47,7 @@ pub const ascii: Glyphs = .{
     .git_modified = "!",
     .git_deleted = "-",
     .git_conflicted = "=",
+    .git_untracked = "?",
     .git_ahead = "^",
     .git_behind = "v",
     .status = "x ",

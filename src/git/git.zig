@@ -9,6 +9,8 @@ pub const delta = @import("delta.zig");
 pub const index = @import("index.zig");
 pub const config = @import("config.zig");
 pub const status = @import("status.zig");
+pub const ignore = @import("ignore.zig");
+pub const untracked = @import("untracked.zig");
 
 pub const Repo = repo.Repo;
 pub const Status = status.Status;

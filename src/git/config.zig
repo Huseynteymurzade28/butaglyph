@@ -120,27 +120,27 @@ fn parseValue(raw: []const u8, buf: []u8) ?[]const u8 {
 
 test Config {
     const c: Config = .{ .text =
-    \\# comment
-    \\[core]
-    \\    repositoryformatversion = 0
-    \\    bare = false
-    \\[Branch "main"]
-    \\    remote = origin
-    \\    merge = refs/heads/main
-    \\[branch "Main"]
-    \\    remote = other
-    \\[branch "feat/x"]
-    \\    REMOTE = "up stream" ; trailing comment
-    \\    merge = refs/heads/feat/x  # another
-    \\[remote "origin"]
-    \\    url = https://example.com/r.git
-    \\[branch.legacy]
-    \\    remote = old
-    \\[extensions]
-    \\    objectFormat = sha256
-    \\    worktreeConfig
-    \\[branch "main"]
-    \\    merge = refs/heads/trunk
+        \\# comment
+        \\[core]
+        \\    repositoryformatversion = 0
+        \\    bare = false
+        \\[Branch "main"]
+        \\    remote = origin
+        \\    merge = refs/heads/main
+        \\[branch "Main"]
+        \\    remote = other
+        \\[branch "feat/x"]
+        \\    REMOTE = "up stream" ; trailing comment
+        \\    merge = refs/heads/feat/x  # another
+        \\[remote "origin"]
+        \\    url = https://example.com/r.git
+        \\[branch.legacy]
+        \\    remote = old
+        \\[extensions]
+        \\    objectFormat = sha256
+        \\    worktreeConfig
+        \\[branch "main"]
+        \\    merge = refs/heads/trunk
     };
     var buf: [256]u8 = undefined;
     try std.testing.expectEqualStrings("origin", c.get("branch", "main", "remote", &buf).?);

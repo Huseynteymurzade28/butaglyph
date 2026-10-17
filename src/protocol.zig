@@ -16,7 +16,7 @@
 //! little-endian.
 
 const std = @import("std");
-const builtin = @import("builtin");
+const sys = @import("sys.zig");
 const module = @import("module.zig");
 const wire = @import("wire.zig");
 
@@ -77,22 +77,33 @@ pub const fingerprint: u64 = blk: {
     break :blk h.final();
 };
 
-/// The daemon is Linux-only for now (it relies on inotify).
-pub const supported = builtin.os.tag == .linux;
+/// Linux (inotify) and macOS (kqueue).
+pub const supported = sys.supported;
 
 /// `$BUTA_SOCKET` if set (empty disables the daemon), else
-/// `$XDG_RUNTIME_DIR/butaglyph.sock`. Without either there is no daemon:
-/// XDG_RUNTIME_DIR is private to the user, while a socket in a shared
+/// `$XDG_RUNTIME_DIR/butaglyph.sock`, else on macOS
+/// `$TMPDIR/butaglyph.sock`. Without any of them there is no daemon: those
+/// directories are private to the user, while a socket in a shared
 /// directory such as /tmp would need more care than it is worth.
 pub fn socketPath(buf: *[std.Io.net.UnixAddress.max_len]u8, getenv: anytype) ?[:0]const u8 {
     if (!supported) return null;
     if (getenv.get("BUTA_SOCKET")) |p| {
         if (p.len == 0) return null;
-        return std.fmt.bufPrintSentinel(buf, "{s}", .{p}, 0) catch null;
+        return fit(buf, p, "");
     }
-    const dir = getenv.get("XDG_RUNTIME_DIR") orelse return null;
+    if (getenv.get("XDG_RUNTIME_DIR")) |dir| return dirPath(buf, dir);
+    if (sys.is_darwin) if (getenv.get("TMPDIR")) |dir| return dirPath(buf, dir);
+    return null;
+}
+
+fn dirPath(buf: *[std.Io.net.UnixAddress.max_len]u8, dir: []const u8) ?[:0]const u8 {
     if (dir.len == 0 or dir[0] != '/') return null;
-    return std.fmt.bufPrintSentinel(buf, "{s}/butaglyph.sock", .{dir}, 0) catch null;
+    return fit(buf, std.mem.trimEnd(u8, dir, "/"), "/butaglyph.sock");
+}
+
+fn fit(buf: *[std.Io.net.UnixAddress.max_len]u8, a: []const u8, b: []const u8) ?[:0]const u8 {
+    if (a.len + b.len > sys.max_socket_path) return null;
+    return std.fmt.bufPrintSentinel(buf, "{s}{s}", .{ a, b }, 0) catch null;
 }
 
 pub fn writeHeader(w: *std.Io.Writer, payload_len: usize) std.Io.Writer.Error!void {
@@ -124,7 +135,7 @@ test socketPath {
     if (!supported) return error.SkipZigTest;
     var buf: [std.Io.net.UnixAddress.max_len]u8 = undefined;
     try std.testing.expectEqualStrings("/s.sock", socketPath(&buf, TestEnv{ .map = &.{ .{ "BUTA_SOCKET", "/s.sock" }, .{ "XDG_RUNTIME_DIR", "/run/user/1" } } }).?);
-    try std.testing.expectEqualStrings("/run/user/1/butaglyph.sock", socketPath(&buf, TestEnv{ .map = &.{.{ "XDG_RUNTIME_DIR", "/run/user/1" }} }).?);
+    try std.testing.expectEqualStrings("/run/user/1/butaglyph.sock", socketPath(&buf, TestEnv{ .map = &.{.{ "XDG_RUNTIME_DIR", "/run/user/1/" }} }).?);
     try std.testing.expectEqual(null, socketPath(&buf, TestEnv{ .map = &.{ .{ "BUTA_SOCKET", "" }, .{ "XDG_RUNTIME_DIR", "/run/user/1" } } }));
     try std.testing.expectEqual(null, socketPath(&buf, TestEnv{ .map = &.{.{ "XDG_RUNTIME_DIR", "rel" }} }));
     try std.testing.expectEqual(null, socketPath(&buf, TestEnv{ .map = &.{} }));

@@ -47,7 +47,7 @@ pub const Id = enum {
 /// * `cheap`: no I/O, bounded CPU work on the Context. Runs inline on the
 ///   main thread; dispatching it would cost more than computing it.
 /// * `expensive`: touches the filesystem (or, later, the network). Runs on a
-///   worker thread with a deadline, and is what the Phase 3 daemon caches.
+///   worker thread with a deadline, and is what the daemon caches.
 pub const Cost = enum { cheap, expensive };
 
 /// What an expensive module's result depends on, which decides whether the
@@ -55,11 +55,12 @@ pub const Cost = enum { cheap, expensive };
 /// * `local` (the default): anything in the Context. Always computed by
 ///   the client.
 /// * `repo`: only the git repository containing `ctx.physical_cwd` (its
-///   work tree, index, HEAD, refs and config) and the module's Config. The
-///   daemon computes it with a Context that has only `io`, `cwd`,
-///   `physical_cwd` and `debug` filled in, and keeps the result until
-///   inotify reports a change in that repository. Its Config and Data must
-///   be encodable by src/wire.zig.
+///   work tree, index, HEAD, refs and config, plus the user's global git
+///   files) and the module's Config. The daemon computes it with a Context
+///   that has only `io`, `cwd`, `physical_cwd`, `debug` and its own `env`
+///   and `home` filled in, and keeps the result until the file system
+///   reports a change in that repository. Its Config and Data must be
+///   encodable by src/wire.zig.
 pub const Scope = enum { local, repo };
 
 pub fn scopeOf(comptime M: type) Scope {

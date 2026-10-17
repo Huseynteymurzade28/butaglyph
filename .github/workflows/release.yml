@@ -1,0 +1,35 @@
+name: Release
+
+# Push a tag such as v0.2.0 to publish binaries for every platform.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Build
+        run: |
+          mkdir dist
+          for t in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows; do
+            zig build -Doptimize=ReleaseFast -Dtarget=$t -p "out/$t"
+            name="buta-$GITHUB_REF_NAME-$t"
+            if [[ $t == *windows ]]; then
+              (cd "out/$t/bin" && zip -q "../../../dist/$name.zip" buta.exe)
+            else
+              tar -C "out/$t/bin" -czf "dist/$name.tar.gz" buta
+            fi
+          done
+          (cd dist && sha256sum * > SHA256SUMS)
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes

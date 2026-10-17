@@ -41,7 +41,7 @@ const Fixture = struct {
         try argv.append(f.arena(), "git");
         try argv.appendSlice(f.arena(), args);
         var env: std.process.Environ.Map = .init(f.arena());
-        try env.put("PATH", testing.environ.getPosix("PATH") orelse "/usr/bin:/bin");
+        try env.put("PATH", testPath());
         try env.put("HOME", f.root);
         try env.put("GIT_CONFIG_NOSYSTEM", "1");
         try env.put("GIT_CONFIG_GLOBAL", "/dev/null");
@@ -76,12 +76,14 @@ const Fixture = struct {
 
     fn ours(f: *Fixture, sub: []const u8) !git.Status {
         const repo = (try git.repo.discover(io, f.arena(), try f.path(sub))).?;
-        return git.status.compute(io, f.arena(), repo, .{});
+        // The same global files git sees: none but the fixture's own.
+        return git.status.compute(io, f.arena(), repo, .{ .global = .{ .home = f.root, .config_global = "/dev/null" } });
     }
 
-    /// git's view, from porcelain v2 (no renames, no untracked files).
+    /// git's view, from porcelain v2 (no renames; untracked files as the
+    /// repository's status.showUntrackedFiles says).
     fn theirs(f: *Fixture, sub: []const u8) !git.Status {
-        const out = try f.run(sub, &.{ "--no-optional-locks", "status", "--porcelain=v2", "--branch", "--no-renames", "--untracked-files=no" });
+        const out = try f.run(sub, &.{ "--no-optional-locks", "status", "--porcelain=v2", "--branch", "--no-renames" });
         var st: git.Status = .{};
         var lines = std.mem.splitScalar(u8, out, '\n');
         while (lines.next()) |line| {
@@ -100,6 +102,8 @@ const Fixture = struct {
                 }
             } else if (std.mem.startsWith(u8, line, "u ")) {
                 st.conflicted += 1;
+            } else if (std.mem.startsWith(u8, line, "? ")) {
+                st.untracked += 1;
             }
         }
         return st;
@@ -354,4 +358,121 @@ test "large index (parallel worktree check) matches git" {
     try f.expectSame("r", "large with changes");
     const st = try f.ours("r");
     try testing.expect(st.modified > 50 and st.deleted > 20);
+}
+
+test "untracked files and .gitignore rules match git" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    _ = try f.run("", &.{ "init", "-q", "-b", "main", "r" });
+    try f.write("r/tracked.txt", "t\n");
+    try f.write("r/src/main.c", "int main;\n");
+    try f.write("r/src/lib/util.c", "u\n");
+    try f.write("r/build/keep.txt", "force-added\n");
+    try f.write("r/.gitignore",
+        \\# build output
+        \\*.o
+        \\/build/
+        \\logs/
+        \\!logs/important.log
+        \\doc/**/*.tmp
+        \\**/cache
+        \\/anchored.txt
+        \\trailing\\ 
+        \\[Tt]emp*
+        \\
+    );
+    try f.write("r/src/.gitignore", "*.gen\n!keep.gen\nlib/*.c\n");
+    _ = try f.run("r", &.{ "add", ".gitignore", "src/.gitignore", "tracked.txt", "src/main.c" });
+    _ = try f.run("r", &.{ "add", "-f", "build/keep.txt", "src/lib/util.c" });
+    _ = try f.run("r", &.{ "commit", "-qm", "base" });
+    try f.expectSame("r", "clean");
+
+    const files = [_][]const u8{
+        "r/new.txt", // untracked
+        "r/a.o", "r/src/b.o", // ignored by *.o
+        "r/build/out.bin", // inside an ignored directory with a tracked file
+        "r/logs/x.log",    "r/logs/important.log", // can't re-include below an ignored dir
+        "r/doc/a/b/c.tmp", "r/doc/x.tmp",
+        "r/doc/readme.md",
+        "r/deep/er/cache/f", "r/cache/g", // **/cache
+        "r/anchored.txt",    "r/sub/anchored.txt",
+        "r/trailing ",       "r/Temporary",
+        "r/temp.txt",        "r/xtemp",
+        "r/src/x.gen",       "r/src/keep.gen",
+        "r/src/lib/new.c",   "r/src/lib/new.h",
+        "r/untracked-dir/a/b/c.txt", // collapses to one entry
+        "r/only-ignored/z.o", // holds nothing countable
+        "r/src/newdir/f.txt",
+    };
+    for (files) |p| try f.write(p, "x\n");
+    try f.tmp.dir.createDirPath(io, "r/empty/inner"); // empty directories don't count
+    try f.expectSame("r", "gitignore rules");
+    try f.expectSame("r/src", "from a subdirectory");
+
+    // A nested repository counts once, and is not looked into.
+    _ = try f.run("", &.{ "init", "-q", "r/nested" });
+    try f.write("r/nested/inside.txt", "x\n");
+    try f.expectSame("r", "nested repository");
+
+    // Repository-wide rules: info/exclude and core.excludesFile.
+    try f.write("r/.git/info/exclude", "new.txt\n");
+    try f.write("r/global-ignore", "*.md\n");
+    _ = try f.run("r", &.{ "config", "core.excludesFile", try f.path("r/global-ignore") });
+    try f.expectSame("r", "info/exclude and core.excludesFile");
+
+    _ = try f.run("r", &.{ "config", "status.showUntrackedFiles", "all" });
+    try f.expectSame("r", "showUntrackedFiles=all");
+    _ = try f.run("r", &.{ "config", "status.showUntrackedFiles", "no" });
+    try f.expectSame("r", "showUntrackedFiles=no");
+    try testing.expectEqual(@as(u32, 0), (try f.ours("r")).untracked);
+}
+
+test "untracked files: random trees and rules match git" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    _ = try f.run("", &.{ "init", "-q", "-b", "main", "r" });
+    var prng: std.Random.DefaultPrng = .init(0x6275746167);
+    const rand = prng.random();
+    const names = [_][]const u8{ "a", "b", "ab", "a.c", "b.o", "x.log", "doc", "Temp", "cache", "z-1" };
+    const patterns = [_][]const u8{ "*.o", "a", "/a", "a/", "!b", "**/doc", "doc/**", "*/b", "[ab]", "!*.c", "x*", "/doc/a", "cache/", "**/a/**", "?", "!ab", "*", "!a/" };
+
+    for (0..12) |round| {
+        // A fresh random tree: some files tracked, the rest left untracked.
+        try f.tmp.dir.deleteTree(io, "r");
+        _ = try f.run("", &.{ "init", "-q", "-b", "main", "r" });
+        for (0..40) |_| {
+            var path: std.ArrayList(u8) = .empty;
+            try path.appendSlice(f.arena(), "r");
+            const depth = rand.intRangeAtMost(usize, 1, 4);
+            for (0..depth) |_| {
+                try path.append(f.arena(), '/');
+                try path.appendSlice(f.arena(), names[rand.uintLessThan(usize, names.len)]);
+            }
+            try path.appendSlice(f.arena(), ".f");
+            f.write(path.items, "x\n") catch continue; // a file where a directory is needed
+        }
+        for (0..3) |_| {
+            var rules: std.ArrayList(u8) = .empty;
+            for (0..rand.intRangeAtMost(usize, 1, 5)) |_| {
+                try rules.appendSlice(f.arena(), patterns[rand.uintLessThan(usize, patterns.len)]);
+                try rules.append(f.arena(), '\n');
+            }
+            const where = [_][]const u8{ "r/.gitignore", "r/a/.gitignore", "r/doc/.gitignore", "r/b/a/.gitignore" };
+            f.write(where[rand.uintLessThan(usize, where.len)], rules.items) catch {};
+        }
+        _ = f.runAllowFail("r", &.{ "add", "--", "a" }) catch {};
+        const label = try std.fmt.allocPrint(f.arena(), "random tree {d}", .{round});
+        try f.expectSame("r", label);
+        _ = try f.run("r", &.{ "config", "status.showUntrackedFiles", "all" });
+        try f.expectSame("r", label);
+    }
+}
+
+/// The test runner's $PATH, for finding git and the shells.
+fn testPath() []const u8 {
+    const S = struct {
+        var map: ?std.process.Environ.Map = null;
+    };
+    if (S.map == null) S.map = testing.environ.createMap(std.heap.page_allocator) catch return "/usr/bin:/bin";
+    return S.map.?.get("PATH") orelse "/usr/bin:/bin";
 }

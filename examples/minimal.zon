@@ -1,0 +1,11 @@
+// minimal: one line, no icons, only what changes your next command.
+// Works with any font.
+.{
+    .glyphs = .ascii,
+    .order = .{ .dir, .git_branch, .git_status, .status, .character },
+    .dir = .{ .style = .{ .fg = "blue", .bold = true }, .max_length = 0, .full_dirs = 1 },
+    .git_branch = .{ .style = .{ .fg = "bright_black" }, .symbol = "" },
+    .git_status = .{ .style = .{ .fg = "yellow" }, .show_counts = false },
+    .status = .{ .symbol = "" },
+    .character = .{ .success_symbol = "$", .failure_symbol = "$" },
+}

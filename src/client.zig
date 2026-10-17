@@ -7,7 +7,7 @@
 
 const std = @import("std");
 const Io = std.Io;
-const linux = std.os.linux;
+const sys = @import("sys.zig");
 const module = @import("module.zig");
 const protocol = @import("protocol.zig");
 const wire = @import("wire.zig");
@@ -28,7 +28,8 @@ pub const Conn = struct {
     /// `cfg.order`. Returns false (and asks for nothing) when there is no
     /// daemon to ask.
     pub fn open(c: *Conn, ctx: *const Context, cfg: *const Config) bool {
-        if (!protocol.supported) return false;
+        if (!protocol.supported) return false; // keeps the rest out of other builds
+        if (cfg.daemon == .off) return false;
         var wanted = false;
         inline for (@typeInfo(Id).@"enum".fields) |f| {
             if (module.scopeOf(module.Impl(@enumFromInt(f.value))) == .repo and module.inOrder(cfg, @enumFromInt(f.value))) wanted = true;
@@ -36,8 +37,16 @@ pub const Conn = struct {
         if (!wanted) return false;
 
         var path_buf: [Io.net.UnixAddress.max_len]u8 = undefined;
-        const path = protocol.socketPath(&path_buf, EnvLookup{ .ctx = ctx }) orelse return false;
-        const fd = connect(path) orelse return false;
+        const path = protocol.socketPath(&path_buf, ctx.env) orelse return false;
+        const fd = sys.socket(true) catch return false;
+        // A Unix socket connects at once or not at all: WouldBlock means
+        // the daemon's backlog is full, which counts as "no daemon".
+        sys.connect(fd, path) catch |e| {
+            sys.close(fd);
+            // No socket, or one left behind by a daemon that died.
+            if (cfg.daemon == .auto and (e == error.NotFound or e == error.Refused)) autostart(ctx, path);
+            return false;
+        };
         c.fd = fd;
         if (c.send(ctx, cfg)) return true;
         c.close();
@@ -75,13 +84,14 @@ pub const Conn = struct {
         protocol.writeHeader(&hw, payload.written().len) catch return false;
         // A local socket's buffer holds far more than a request, so a write
         // that does not complete at once means something is wrong.
-        return writeAll(c.fd, &header) and writeAll(c.fd, payload.written());
+        return sys.writeAll(c.fd, &header) and sys.writeAll(c.fd, payload.written());
     }
 
     /// Reads frames until every pending module is answered, has missed its
     /// deadline (its slot stays null), or the daemon hangs up (it stays
     /// pending, for the caller to compute locally).
     pub fn collect(c: *Conn, ctx: *const Context, cfg: *const Config, start: Io.Clock.Timestamp, rt: *module.Runtime, slots: *module.Slots) void {
+        if (!protocol.supported) return; // never opened
         defer c.close();
         while (true) {
             while (true) {
@@ -160,62 +170,55 @@ pub const Conn = struct {
     /// Waits up to `timeout_ms` for more bytes. False on hang-up or error.
     fn fill(c: *Conn, timeout_ms: i32) bool {
         if (c.len == c.buf.len) return false;
-        var pfd = [_]linux.pollfd{.{ .fd = c.fd, .events = linux.POLL.IN, .revents = 0 }};
-        const rc = linux.poll(&pfd, 1, timeout_ms);
-        switch (linux.errno(rc)) {
-            .SUCCESS => if (rc == 0) return true, // timed out: the caller re-checks deadlines
-            .INTR => return true,
-            else => return false,
-        }
-        const got = linux.read(c.fd, c.buf[c.len..].ptr, c.buf.len - c.len);
-        switch (linux.errno(got)) {
-            .SUCCESS => {},
-            .INTR, .AGAIN => return true,
-            else => return false,
-        }
+        const ready = sys.waitReadable(c.fd, timeout_ms) catch |e| return e == error.Interrupted;
+        if (!ready) return true; // timed out: the caller re-checks deadlines
+        const got = sys.read(c.fd, c.buf[c.len..]) catch |e| return e == error.Interrupted or e == error.WouldBlock;
         if (got == 0) return false; // hang-up
         c.len += got;
         return true;
     }
 
     fn close(c: *Conn) void {
-        if (c.fd >= 0) _ = linux.close(c.fd);
+        if (c.fd >= 0) sys.close(c.fd);
         c.fd = -1;
     }
 };
 
-/// A non-blocking connection to the socket at `path`, or null.
-fn connect(path: [:0]const u8) ?i32 {
-    const rc = linux.socket(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC | linux.SOCK.NONBLOCK, 0);
-    if (linux.errno(rc) != .SUCCESS) return null;
-    const fd: i32 = @intCast(rc);
-    var addr: linux.sockaddr.un = .{ .path = @splat(0) };
-    @memcpy(addr.path[0..path.len], path);
-    // A Unix socket connects at once or not at all: EAGAIN means the
-    // daemon's backlog is full, which counts as "no daemon".
-    if (linux.errno(linux.connect(fd, &addr, @sizeOf(linux.sockaddr.un))) != .SUCCESS) {
-        _ = linux.close(fd);
-        return null;
-    }
-    return fd;
-}
+/// A daemon that can't start (no inotify, say) is tried again after this
+/// long, so it costs one process spawn per interval rather than per prompt.
+const autostart_interval_s = 30;
 
-fn writeAll(fd: i32, bytes: []const u8) bool {
-    var off: usize = 0;
-    while (off < bytes.len) {
-        const rc = linux.sendto(fd, bytes[off..].ptr, bytes.len - off, linux.MSG.NOSIGNAL, null, 0);
-        switch (linux.errno(rc)) {
-            .SUCCESS => off += rc,
-            .INTR => {},
-            else => return false,
-        }
+/// Starts `buta daemon --detach` and returns without waiting for it: this
+/// prompt is computed locally, the next one asks the daemon.
+///
+/// The daemon's lock file decides: if someone holds it, a daemon is running
+/// or starting (perhaps another build, still serving older shells). If not,
+/// the time of this attempt is written into it, and nobody tries again
+/// before the interval is over.
+fn autostart(ctx: *const Context, socket_path: []const u8) void {
+    var lock_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const lock_path = std.fmt.bufPrintSentinel(&lock_buf, "{s}.lock", .{socket_path}, 0) catch return;
+    sys.umask(0o077);
+    const fd = sys.openLockFile(lock_path) catch return;
+    {
+        // Unlocked before spawning: the daemon takes this lock itself.
+        defer sys.close(fd);
+        sys.tryLock(fd) catch return;
+        const now = Io.Clock.real.now(ctx.io).toSeconds();
+        const last = sys.readStamp(fd);
+        if (now >= last and now - last < autostart_interval_s) return;
+        sys.writeStamp(fd, now);
     }
-    return true;
+    var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = std.process.executablePath(ctx.io, &exe_buf) catch return;
+    const child = std.process.spawn(ctx.io, .{
+        .argv = &.{ exe_buf[0..n], "daemon", "--detach" },
+        .stdin = .ignore,
+        .stdout = .ignore, // never hold the shell's command substitution open
+        .stderr = .ignore,
+    }) catch return;
+    // Not waited for: `--detach` returns once the daemon listens, and
+    // whatever remains of the child is reaped when this process exits.
+    _ = child;
+    if (ctx.debug) std.debug.print("buta: started the daemon\n", .{});
 }
-
-const EnvLookup = struct {
-    ctx: *const Context,
-    pub fn get(e: EnvLookup, name: []const u8) ?[]const u8 {
-        return e.ctx.getEnv(name);
-    }
-};

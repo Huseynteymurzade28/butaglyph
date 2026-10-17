@@ -5,6 +5,7 @@ const std = @import("std");
 const Writer = std.Io.Writer;
 const module = @import("../module.zig");
 const Context = @import("../context.zig").Context;
+const env = @import("../env.zig");
 const Glyphs = @import("../glyphs.zig").Glyphs;
 const render_mod = @import("../render.zig");
 const Line = render_mod.Line;
@@ -37,7 +38,7 @@ pub fn compute(ctx: *const Context, _: *const Config, _: std.mem.Allocator) !?Da
 
 fn split(cwd: []const u8, home: ?[]const u8) Data {
     if (home) |h| {
-        if (std.mem.startsWith(u8, cwd, h) and (cwd.len == h.len or cwd[h.len] == '/')) {
+        if (env.startsWithPath(cwd, h) and (cwd.len == h.len or cwd[h.len] == '/')) {
             return .{ .path = cwd[h.len..], .home_relative = true };
         }
     }
@@ -65,11 +66,20 @@ pub fn formatPath(w: *Writer, data: Data, cfg: *const Config) Writer.Error!void 
     while (count_it.next()) |_| total += 1;
     if (total == 0 and !data.home_relative) return w.writeAll("/");
 
+    // Windows roots are never abbreviated: the drive (`C:/...`, written
+    // without a leading slash) and a UNC `//server/share`.
+    const drive = !data.home_relative and data.path.len > 0 and data.path[0] != '/';
+    const unc = !data.home_relative and std.mem.startsWith(u8, data.path, "//");
+    const root_comps: usize = if (drive) 1 else if (unc) 2 else 0;
+    if (unc) try w.writeByte('/');
     var it = std.mem.tokenizeScalar(u8, data.path, '/');
     var i: usize = 0;
     while (it.next()) |comp| : (i += 1) {
-        try w.writeByte('/');
-        if (i + cfg.full_dirs >= total) {
+        if (!(drive and i == 0)) try w.writeByte('/');
+        if (i < root_comps) {
+            try w.writeAll(comp);
+            if (drive and total == 1) try w.writeByte('/');
+        } else if (i + cfg.full_dirs >= total) {
             try w.writeAll(comp);
         } else {
             try w.writeAll(abbreviateComponent(comp, cfg.abbrev_len));
@@ -120,6 +130,14 @@ test "long paths are abbreviated fish-style" {
     try expectPath("~/de/pr/bu/sr/modules", long, "/home/u", .{ .abbrev_len = 2 });
     try expectPath("~/dev/projects/butaglyph/src/modules", long, "/home/u", .{ .abbreviate = false });
     try expectPath("/u/l/s/doc/zig", "/usr/local/share/doc/zig", null, .{ .max_length = 0, .full_dirs = 2 });
+}
+
+test "Windows paths keep their drive" {
+    try expectPath("C:/U/x/dev", "C:/Users/x/dev", null, .{ .max_length = 0 });
+    try expectPath("C:/", "C:/", null, .{ .max_length = 0 });
+    try expectPath("C:/Windows", "C:/Windows", null, .{});
+    try expectPath("//server/share/dir", "//server/share/dir", null, .{ .max_length = 0 });
+    try expectPath("~/d/src", "C:/Users/x/dev/src", "C:/Users/x", .{ .max_length = 0 });
 }
 
 test "max_length = 0 always abbreviates" {

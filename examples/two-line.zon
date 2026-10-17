@@ -1,0 +1,9 @@
+// two-line: details on the first line, the command on the second, with a
+// left border tying them together.
+.{
+    .order = .{ .dir, .git_branch, .git_status, .jobs, .duration, .status, .line_break, .character },
+    .dir = .{ .style = .{ .fg = "cyan", .bold = true }, .abbreviate = false },
+    .git_branch = .{ .style = .{ .fg = "magenta" }, .max_length = 24 },
+    .duration = .{ .min_ms = 500 },
+    .character = .{ .success_symbol = "╰─❯", .failure_symbol = "╰─✗" },
+}

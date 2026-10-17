@@ -3,7 +3,9 @@
 //! Spawns `buta prompt` N times (default 1000) from the current directory
 //! and reports wall-clock statistics. Each sample includes fork/exec, i.e.
 //! exactly what the shell pays per prompt. `/bin/true` is measured the same
-//! way as a baseline for the process-spawn cost alone.
+//! way as a baseline for the process-spawn cost alone. The daemon is turned
+//! off (BUTA_SOCKET=""), so this measures computing everything locally and
+//! never starts a daemon from the build cache.
 
 const std = @import("std");
 const Io = std.Io;
@@ -18,8 +20,10 @@ pub fn main(init: std.process.Init) !void {
     const iterations = if (args.len > 2) try std.fmt.parseInt(usize, args[2], 10) else 1000;
 
     const prompt_argv = [_][]const u8{ args[1], "prompt", "--shell", "bash", "--status", "1", "--duration-ms", "3500", "--jobs", "1" };
-    const baseline = try measure(io, arena, &.{"/bin/true"}, iterations);
-    const stats = try measure(io, arena, &prompt_argv, iterations);
+    var env = try init.environ_map.clone(arena);
+    try env.put("BUTA_SOCKET", "");
+    const baseline = try measure(io, arena, &.{"/bin/true"}, &env, iterations);
+    const stats = try measure(io, arena, &prompt_argv, &env, iterations);
 
     var out_buf: [2048]u8 = undefined;
     var out_file = Io.File.stdout().writer(io, &out_buf);
@@ -36,10 +40,10 @@ pub fn main(init: std.process.Init) !void {
 
 const Stats = struct { mean: f64, p50: f64, p99: f64, min: f64, max: f64 };
 
-fn measure(io: Io, arena: std.mem.Allocator, argv: []const []const u8, n: usize) !Stats {
+fn measure(io: Io, arena: std.mem.Allocator, argv: []const []const u8, env: *const std.process.Environ.Map, n: usize) !Stats {
     const samples = try arena.alloc(f64, n);
-    for (0..20) |_| _ = try runOnce(io, argv); // warm up the page cache
-    for (samples) |*s| s.* = try runOnce(io, argv);
+    for (0..20) |_| _ = try runOnce(io, argv, env); // warm up the page cache
+    for (samples) |*s| s.* = try runOnce(io, argv, env);
     std.mem.sortUnstable(f64, samples, {}, std.sort.asc(f64));
     var sum: f64 = 0;
     for (samples) |s| sum += s;
@@ -52,10 +56,11 @@ fn measure(io: Io, arena: std.mem.Allocator, argv: []const []const u8, n: usize)
     };
 }
 
-fn runOnce(io: Io, argv: []const []const u8) !f64 {
+fn runOnce(io: Io, argv: []const []const u8, env: *const std.process.Environ.Map) !f64 {
     const start = Io.Timestamp.now(io, .awake);
     var child = try std.process.spawn(io, .{
         .argv = argv,
+        .environ_map = env,
         .stdin = .ignore,
         .stdout = .ignore,
         .stderr = .ignore,

@@ -4,10 +4,11 @@
 const std = @import("std");
 const Io = std.Io;
 const Shell = @import("render.zig").Shell;
+const env = @import("env.zig");
 
 pub const Context = struct {
     io: Io,
-    environ: std.process.Environ,
+    env: env.Env,
     /// Logical working directory as the user sees it ($PWD, symlinks intact).
     cwd: []const u8,
     /// Physical working directory (getcwd). Used for filesystem walks such as
@@ -26,14 +27,17 @@ pub const Context = struct {
     debug: bool = false,
 
     pub fn getEnv(ctx: *const Context, name: []const u8) ?[]const u8 {
-        return ctx.environ.getPosix(name);
+        return ctx.env.get(name);
     }
 };
 
-/// Normalizes $HOME: strips trailing slashes, rejects "", "/" and relative paths.
+/// Normalizes $HOME (already in `/` form): strips trailing slashes,
+/// rejects "", the root and relative paths.
 pub fn normalizeHome(raw: ?[]const u8) ?[]const u8 {
-    const h = std.mem.trimEnd(u8, raw orelse return null, "/");
-    if (h.len == 0 or h[0] != '/') return null;
+    const r = raw orelse return null;
+    if (!env.isAbsolute(r)) return null;
+    const h = std.mem.trimEnd(u8, r, "/");
+    if (h.len < env.rootLen(r)) return null; // the root itself (`/`, `C:/`)
     return h;
 }
 
@@ -41,7 +45,7 @@ pub fn normalizeHome(raw: ?[]const u8) ?[]const u8 {
 /// which is what POSIX shells guarantee for the logical cwd.
 pub fn validPwd(pwd: ?[]const u8) ?[]const u8 {
     const p = pwd orelse return null;
-    if (p.len == 0 or p[0] != '/') return null;
+    if (!env.isAbsolute(p)) return null;
     var it = std.mem.splitScalar(u8, p, '/');
     while (it.next()) |comp| {
         if (std.mem.eql(u8, comp, ".") or std.mem.eql(u8, comp, "..")) return null;
@@ -49,19 +53,24 @@ pub fn validPwd(pwd: ?[]const u8) ?[]const u8 {
     return p;
 }
 
+/// An absolute path on the platform the tests run on: `/a` or `C:/a`.
+fn abs(comptime p: []const u8) []const u8 {
+    return if (env.is_windows) "C:" ++ p else p;
+}
+
 test normalizeHome {
-    try std.testing.expectEqualStrings("/home/a", normalizeHome("/home/a/").?);
-    try std.testing.expectEqualStrings("/home/a", normalizeHome("/home/a").?);
-    try std.testing.expectEqual(@as(?[]const u8, null), normalizeHome("/"));
+    try std.testing.expectEqualStrings(abs("/home/a"), normalizeHome(abs("/home/a/")).?);
+    try std.testing.expectEqualStrings(abs("/home/a"), normalizeHome(abs("/home/a")).?);
+    try std.testing.expectEqual(@as(?[]const u8, null), normalizeHome(abs("/")));
     try std.testing.expectEqual(@as(?[]const u8, null), normalizeHome(""));
     try std.testing.expectEqual(@as(?[]const u8, null), normalizeHome("rel"));
     try std.testing.expectEqual(@as(?[]const u8, null), normalizeHome(null));
 }
 
 test validPwd {
-    try std.testing.expectEqualStrings("/a/b", validPwd("/a/b").?);
-    try std.testing.expectEqualStrings("/", validPwd("/").?);
-    try std.testing.expectEqual(@as(?[]const u8, null), validPwd("/a/../b"));
-    try std.testing.expectEqual(@as(?[]const u8, null), validPwd("/a/./b"));
+    try std.testing.expectEqualStrings(abs("/a/b"), validPwd(abs("/a/b")).?);
+    try std.testing.expectEqualStrings(abs("/"), validPwd(abs("/")).?);
+    try std.testing.expectEqual(@as(?[]const u8, null), validPwd(abs("/a/../b")));
+    try std.testing.expectEqual(@as(?[]const u8, null), validPwd(abs("/a/./b")));
     try std.testing.expectEqual(@as(?[]const u8, null), validPwd("a/b"));
 }

@@ -1,0 +1,16 @@
+// tokyo-night: truecolor colors from the Tokyo Night palette, with a dot
+// between segments and the job count shown.
+.{
+    .separator = " · ",
+    .order = .{ .dir, .git_branch, .git_status, .duration, .status, .jobs, .line_break, .character },
+    .dir = .{ .style = .{ .fg = "#7aa2f7", .bold = true }, .max_length = 32, .full_dirs = 2 },
+    .git_branch = .{ .style = .{ .fg = "#bb9af7" } },
+    .git_status = .{ .style = .{ .fg = "#e0af68" } },
+    .duration = .{ .style = .{ .fg = "#7dcfff" }, .min_ms = 1000 },
+    .status = .{ .style = .{ .fg = "#f7768e", .bold = true } },
+    .jobs = .{ .style = .{ .fg = "#9ece6a" }, .count_from = 1 },
+    .character = .{
+        .success_style = .{ .fg = "#9ece6a", .bold = true },
+        .failure_style = .{ .fg = "#f7768e", .bold = true },
+    },
+}

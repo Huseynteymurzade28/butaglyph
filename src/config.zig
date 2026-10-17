@@ -7,6 +7,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const module = @import("module.zig");
 const glyphs = @import("glyphs.zig");
+const env = @import("env.zig");
 const m = module.impls;
 
 pub const Config = struct {
@@ -20,6 +21,10 @@ pub const Config = struct {
     /// module that misses it is left out of this prompt. Modules can
     /// override it with their own `timeout_ms`.
     timeout_ms: u32 = 100,
+    /// The cache daemon (`buta daemon`, Linux and macOS): `.auto` uses it
+    /// and starts it in the background when it isn't running, `.manual`
+    /// uses it only when it runs, `.off` never asks it.
+    daemon: DaemonMode = .auto,
 
     dir: m.dir.Config = .{},
     git_branch: m.git_branch.Config = .{},
@@ -31,6 +36,8 @@ pub const Config = struct {
     line_break: m.line_break.Config = .{},
 };
 
+pub const DaemonMode = enum { auto, manual, off };
+
 pub const default_order = [_]module.Id{ .dir, .git_branch, .git_status, .duration, .status, .jobs, .line_break, .character };
 
 /// Largest config file we accept; larger files are reported and ignored.
@@ -41,7 +48,7 @@ pub fn path(buf: []u8, getenv: anytype, home: ?[]const u8) ?[]const u8 {
     if (getenv.get("BUTA_CONFIG")) |p| if (p.len > 0) return p;
     if (getenv.get("XDG_CONFIG_HOME")) |x| {
         // The XDG spec says relative values must be ignored.
-        if (x.len > 0 and x[0] == '/') return std.fmt.bufPrint(buf, "{s}/butaglyph/config.zon", .{x}) catch null;
+        if (env.isAbsolute(x)) return std.fmt.bufPrint(buf, "{s}/butaglyph/config.zon", .{x}) catch null;
     }
     const h = home orelse return null;
     return std.fmt.bufPrint(buf, "{s}/.config/butaglyph/config.zon", .{h}) catch null;
@@ -87,10 +94,11 @@ const TestEnv = struct {
 };
 
 test "config path resolution" {
+    const r = if (env.is_windows) "C:" else ""; // an absolute path's root
     var buf: [256]u8 = undefined;
-    try std.testing.expectEqualStrings("/c.zon", path(&buf, TestEnv{ .map = &.{ .{ "BUTA_CONFIG", "/c.zon" }, .{ "XDG_CONFIG_HOME", "/x" } } }, "/h").?);
-    try std.testing.expectEqualStrings("/x/butaglyph/config.zon", path(&buf, TestEnv{ .map = &.{.{ "XDG_CONFIG_HOME", "/x" }} }, "/h").?);
-    try std.testing.expectEqualStrings("/h/.config/butaglyph/config.zon", path(&buf, TestEnv{ .map = &.{.{ "XDG_CONFIG_HOME", "rel" }} }, "/h").?);
+    try std.testing.expectEqualStrings("/c.zon", path(&buf, TestEnv{ .map = &.{ .{ "BUTA_CONFIG", "/c.zon" }, .{ "XDG_CONFIG_HOME", r ++ "/x" } } }, r ++ "/h").?);
+    try std.testing.expectEqualStrings(r ++ "/x/butaglyph/config.zon", path(&buf, TestEnv{ .map = &.{.{ "XDG_CONFIG_HOME", r ++ "/x" }} }, r ++ "/h").?);
+    try std.testing.expectEqualStrings(r ++ "/h/.config/butaglyph/config.zon", path(&buf, TestEnv{ .map = &.{.{ "XDG_CONFIG_HOME", "rel" }} }, r ++ "/h").?);
     try std.testing.expectEqual(@as(?[]const u8, null), path(&buf, TestEnv{ .map = &.{} }, null));
 }
 
