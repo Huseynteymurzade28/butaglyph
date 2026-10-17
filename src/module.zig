@@ -41,6 +41,7 @@ pub const Id = enum {
     character,
     jobs,
     line_break,
+    text,
 };
 
 /// How expensive `compute` is.
@@ -76,6 +77,7 @@ pub const impls = struct {
     pub const character = @import("modules/character.zig");
     pub const jobs = @import("modules/jobs.zig");
     pub const line_break = @import("modules/line_break.zig");
+    pub const text = @import("modules/text.zig");
 };
 
 pub fn Impl(comptime id: Id) type {
@@ -91,6 +93,7 @@ pub const Data = union(Id) {
     character: impls.character.Data,
     jobs: impls.jobs.Data,
     line_break: impls.line_break.Data,
+    text: impls.text.Data,
 };
 
 pub const id_count = @typeInfo(Id).@"enum".fields.len;
@@ -264,27 +267,112 @@ pub fn renderOne(data: *const Data, cfg: *const Config, g: *const Glyphs, line: 
 }
 
 /// Renders the modules in `cfg.order`, inserting `cfg.separator` between
-/// non-empty segments. A module that fails to render is rolled back and
-/// skipped; the rest of the prompt is unaffected.
+/// non-empty ones, or, with `cfg.segments`, joining modules that have a
+/// background into segments. A module that fails to render is rolled back
+/// and skipped; the rest of the prompt is unaffected.
 pub fn renderAll(slots: *const Slots, cfg: *const Config, g: *const Glyphs, line: *Line) void {
-    var need_separator = false;
+    var w: Weaver = .{ .cfg = cfg, .line = line };
     for (cfg.order) |id| {
         const data = &(slots[@intFromEnum(id)] orelse continue);
+        if (id == .line_break) {
+            w.endLine() catch return;
+            line.newline() catch return;
+            continue;
+        }
         const start = line.mark();
-        if (id != .line_break and need_separator) line.text(.{}, cfg.separator) catch return;
-        const after_separator = line.mark();
+        const saved = w;
         renderOne(data, cfg, g, line) catch {
             line.restore(start);
             continue;
         };
-        if (id == .line_break) {
-            need_separator = false;
-        } else if (line.len == after_separator.len) {
-            line.restore(start); // rendered nothing: drop the separator too
-        } else {
-            need_separator = true;
-        }
+        if (line.len == start.len) continue; // rendered nothing
+        w.frame(start.len) catch {
+            line.restore(start);
+            w = saved;
+        };
     }
+    w.endLine() catch {};
+}
+
+/// Puts separators, or segment joints and padding, around each module's spans.
+const Weaver = struct {
+    cfg: *const Config,
+    line: *Line,
+    need_separator: bool = false,
+    /// Background of the segment the line currently ends in.
+    open_bg: ?[]const u8 = null,
+
+    const Span = Line.Span;
+    const edge = @import("render.zig").Paint.edge;
+
+    fn span(style: @import("render.zig").Style, text: []const u8) Span {
+        return .{ .style = style, .kind = .text, .text = text };
+    }
+
+    /// The module's spans start at `at` and run to the end of the line.
+    fn frame(w: *Weaver, at: usize) Line.Error!void {
+        var before: [4]Span = undefined;
+        var n: usize = 0;
+        const bg = if (w.cfg.segments != null) segmentBackground(w.line.items()[at..]) else null;
+        if (bg) |b| {
+            const seg = w.cfg.segments.?;
+            if (w.open_bg != null and seg.join != null) {
+                before[n] = span(.{ .fg = edge(w.open_bg.?, true), .bg = edge(b, false) }, seg.join.?);
+                n += 1;
+            } else {
+                if (w.open_bg) |prev| {
+                    before[n] = span(.{ .fg = edge(prev, true) }, seg.close);
+                    n += 1;
+                }
+                if (w.need_separator) {
+                    before[n] = span(.{}, w.cfg.separator);
+                    n += 1;
+                }
+                before[n] = span(.{ .fg = edge(b, false) }, seg.open);
+                n += 1;
+            }
+            before[n] = span(.{ .bg = edge(b, false) }, seg.padding);
+            n += 1;
+            try w.insertNonEmpty(at, before[0..n]);
+            try w.line.text(.{ .bg = edge(b, true) }, seg.padding);
+            w.open_bg = b;
+        } else {
+            if (w.open_bg) |prev| {
+                before[n] = span(.{ .fg = edge(prev, true) }, w.cfg.segments.?.close);
+                n += 1;
+                w.open_bg = null;
+            }
+            if (w.need_separator) {
+                before[n] = span(.{}, w.cfg.separator);
+                n += 1;
+            }
+            try w.insertNonEmpty(at, before[0..n]);
+        }
+        w.need_separator = true;
+    }
+
+    fn insertNonEmpty(w: *Weaver, at: usize, spans: []const Span) Line.Error!void {
+        var keep: [4]Span = undefined;
+        var n: usize = 0;
+        for (spans) |s| if (s.text.len > 0) {
+            keep[n] = s;
+            n += 1;
+        };
+        try w.line.insert(at, keep[0..n]);
+    }
+
+    /// Closes an open segment run; the next module starts a fresh line.
+    fn endLine(w: *Weaver) Line.Error!void {
+        if (w.open_bg) |prev| try w.line.text(.{ .fg = edge(prev, true) }, w.cfg.segments.?.close);
+        w.open_bg = null;
+        w.need_separator = false;
+    }
+};
+
+/// A module is a segment if it draws something with a background color.
+fn segmentBackground(spans: []const Line.Span) ?[]const u8 {
+    for (spans) |s| if (s.style.bg) |b| return b;
+    return null;
 }
 
 test "renderAll skips empty and hidden modules and joins with separator" {
@@ -315,4 +403,74 @@ test "renderAll skips empty and hidden modules and joins with separator" {
         n += 1;
     }
     try std.testing.expectEqualStrings("/tmp took 2.5s\n> ", stripped[0..n]);
+}
+
+test "segments join modules that have a background" {
+    const render = @import("render.zig");
+    var cfg: Config = .{};
+    cfg.order = &.{ .dir, .status, .duration, .line_break, .character };
+    cfg.segments = .{ .open = "(", .join = ">", .close = ")", .padding = " " };
+    cfg.dir.style = .{ .fg = "black", .bg = "blue" };
+    cfg.duration.style = .{ .bg = "#ff0000>#00ff00" };
+    var slots: Slots = @splat(null);
+    slots[@intFromEnum(Id.dir)] = .{ .dir = .{ .path = "/tmp", .home_relative = false } };
+    slots[@intFromEnum(Id.status)] = .{ .status = .{ .code = 1 } };
+    slots[@intFromEnum(Id.duration)] = .{ .duration = .{ .ms = 2500 } };
+    slots[@intFromEnum(Id.line_break)] = .{ .line_break = .{} };
+    slots[@intFromEnum(Id.character)] = .{ .character = .{ .success = true } };
+    var line: Line = .{};
+    renderAll(&slots, &cfg, @import("glyphs.zig").get(.ascii), &line);
+
+    var text: std.ArrayList(u8) = .empty;
+    defer text.deinit(std.testing.allocator);
+    for (line.items()) |sp| try text.appendSlice(std.testing.allocator, sp.text);
+    // status has no background: it closes the first run and opens nothing.
+    try std.testing.expectEqualStrings("( /tmp ) x 1 ( took 2.5s )\n> ", text.items);
+
+    // Joints are drawn in the neighbors' colors, gradient edges included.
+    for (line.items()) |sp| {
+        if (std.mem.eql(u8, sp.text, "(") and sp.style.fg.?[0] == '#') try std.testing.expectEqualStrings("#ff0000", sp.style.fg.?);
+        if (std.mem.eql(u8, sp.text, ")") and sp.style.fg.?[0] == '#') try std.testing.expectEqualStrings("#00ff00", sp.style.fg.?);
+    }
+    _ = render;
+}
+
+test "adjacent segments share one joint" {
+    var cfg: Config = .{};
+    cfg.order = &.{ .dir, .duration };
+    cfg.segments = .{ .open = "[", .join = ">", .close = "]", .padding = "" };
+    cfg.dir.style = .{ .bg = "blue" };
+    cfg.duration.style = .{ .bg = "red" };
+    var slots: Slots = @splat(null);
+    slots[@intFromEnum(Id.dir)] = .{ .dir = .{ .path = "/tmp", .home_relative = false } };
+    slots[@intFromEnum(Id.duration)] = .{ .duration = .{ .ms = 2500 } };
+    var line: Line = .{};
+    renderAll(&slots, &cfg, @import("glyphs.zig").get(.ascii), &line);
+    var joint: ?Line.Span = null;
+    var text: std.ArrayList(u8) = .empty;
+    defer text.deinit(std.testing.allocator);
+    for (line.items()) |sp| {
+        try text.appendSlice(std.testing.allocator, sp.text);
+        if (std.mem.eql(u8, sp.text, ">")) joint = sp;
+    }
+    try std.testing.expectEqualStrings("[/tmp>took 2.5s]", text.items);
+    try std.testing.expectEqualStrings("blue", joint.?.style.fg.?);
+    try std.testing.expectEqualStrings("red", joint.?.style.bg.?);
+}
+
+test "without a join, every segment is its own pill" {
+    var cfg: Config = .{};
+    cfg.order = &.{ .dir, .duration };
+    cfg.segments = .{ .open = "(", .join = null, .close = ")", .padding = "" };
+    cfg.dir.style = .{ .bg = "blue" };
+    cfg.duration.style = .{ .bg = "red" };
+    var slots: Slots = @splat(null);
+    slots[@intFromEnum(Id.dir)] = .{ .dir = .{ .path = "/tmp", .home_relative = false } };
+    slots[@intFromEnum(Id.duration)] = .{ .duration = .{ .ms = 2500 } };
+    var line: Line = .{};
+    renderAll(&slots, &cfg, @import("glyphs.zig").get(.ascii), &line);
+    var text: std.ArrayList(u8) = .empty;
+    defer text.deinit(std.testing.allocator);
+    for (line.items()) |sp| try text.appendSlice(std.testing.allocator, sp.text);
+    try std.testing.expectEqualStrings("(/tmp) (took 2.5s)", text.items);
 }

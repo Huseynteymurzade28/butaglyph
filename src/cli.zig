@@ -22,6 +22,10 @@ pub const Command = union(enum) {
     prompt: PromptArgs,
     init: InitShell,
     daemon: daemon.Options,
+    /// List the built-in presets, or print one.
+    preset: ?[]const u8,
+    /// Draw sample prompts with every preset, one preset, or a config file.
+    preview: ?[]const u8,
     version,
     help,
 };
@@ -41,6 +45,10 @@ pub const usage =
     \\  buta daemon [--detach]       Run the cache daemon (in the background with --detach)
     \\  buta daemon status           Show whether it runs, and its cache statistics
     \\  buta daemon stop             Stop it
+    \\  buta preview [preset|file]   Draw sample prompts here, with every preset
+    \\                               (or one preset, or a config file)
+    \\  buta preset                  List the built-in presets
+    \\  buta preset <name>           Print one, e.g. buta preset carpet > ~/.config/butaglyph/config.zon
     \\  buta --version
     \\  buta --help
     \\
@@ -62,6 +70,11 @@ pub fn parse(args: anytype) Error!Command {
         return .{ .init = shell };
     }
     if (eql(cmd, "prompt")) return .{ .prompt = parsePrompt(args) };
+    if (eql(cmd, "preset") or eql(cmd, "preview")) {
+        const name = args.next();
+        if (args.next() != null) return error.UnexpectedArgument;
+        return if (eql(cmd, "preset")) .{ .preset = name } else .{ .preview = name };
+    }
     if (eql(cmd, "daemon")) {
         var opts: daemon.Options = .{};
         while (args.next()) |arg| {
@@ -148,6 +161,13 @@ test "init and meta commands" {
     try std.testing.expectError(error.UnknownCommand, testParse(&.{"bogus"}));
     try std.testing.expectEqual(Command.version, try testParse(&.{"--version"}));
     try std.testing.expectEqual(Command.help, try testParse(&.{}));
+}
+
+test "preset and preview" {
+    try std.testing.expectEqualStrings("carpet", (try testParse(&.{ "preset", "carpet" })).preset.?);
+    try std.testing.expectEqual(@as(?[]const u8, null), (try testParse(&.{"preset"})).preset);
+    try std.testing.expectEqual(@as(?[]const u8, null), (try testParse(&.{"preview"})).preview);
+    try std.testing.expectError(error.UnexpectedArgument, testParse(&.{ "preview", "a", "b" }));
 }
 
 test "daemon commands" {

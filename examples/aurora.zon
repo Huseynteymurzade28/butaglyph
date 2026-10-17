@@ -1,0 +1,18 @@
+// aurora: no boxes, just soft gradients of light on two lines.
+// Every module is a gradient blended in OKLab.
+.{
+    .separator = "  ",
+    .order = .{ .dir, .git_branch, .git_status, .duration, .status, .jobs, .line_break, .character },
+    .dir = .{ .style = .{ .fg = "#7ee8fa>#80ff72", .bold = true }, .separator = " ∕ ", .max_length = 40 },
+    .git_branch = .{ .style = .{ .fg = "#c471f5>#fa71cd", .italic = true } },
+    .git_status = .{ .style = .{ .fg = "#f9d423>#ff4e50" } },
+    .duration = .{ .style = .{ .fg = "#a1c4fd>#c2e9fb" } },
+    .status = .{ .style = .{ .fg = "#ff4e50>#f9d423", .bold = true } },
+    .jobs = .{ .style = .{ .fg = "#80ff72" } },
+    .character = .{
+        .success_symbol = "✦",
+        .failure_symbol = "✦",
+        .success_style = .{ .fg = "#80ff72", .bold = true },
+        .failure_style = .{ .fg = "#ff4e50", .bold = true },
+    },
+}

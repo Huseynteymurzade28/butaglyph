@@ -25,6 +25,10 @@ pub const Config = struct {
     /// and starts it in the background when it isn't running, `.manual`
     /// uses it only when it runs, `.off` never asks it.
     daemon: DaemonMode = .auto,
+    /// Draws modules that have a background color as joined segments
+    /// (powerline style). The joints take their colors from the
+    /// neighboring segments. null: modules are just separated.
+    segments: ?Segments = null,
 
     dir: m.dir.Config = .{},
     git_branch: m.git_branch.Config = .{},
@@ -34,9 +38,24 @@ pub const Config = struct {
     character: m.character.Config = .{},
     jobs: m.jobs.Config = .{},
     line_break: m.line_break.Config = .{},
+    text: m.text.Config = .{},
 };
 
 pub const DaemonMode = enum { auto, manual, off };
+
+/// Segment shapes. The defaults are Nerd Font powerline glyphs; see
+/// `shapes` in the README for others (round, slant, flame, pixel).
+pub const Segments = struct {
+    /// Before a run of segments, in the first one's background color.
+    open: []const u8 = "\u{e0b6}",
+    /// Between two segments: the left one's background on the right one's.
+    /// null draws every segment on its own (close, separator, open): pills.
+    join: ?[]const u8 = "\u{e0b0}",
+    /// After a run of segments, in the last one's background color.
+    close: []const u8 = "\u{e0b0}",
+    /// Inside each segment, on both sides of its text.
+    padding: []const u8 = " ",
+};
 
 pub const default_order = [_]module.Id{ .dir, .git_branch, .git_status, .duration, .status, .jobs, .line_break, .character };
 

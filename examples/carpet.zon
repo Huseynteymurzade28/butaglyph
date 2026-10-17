@@ -1,0 +1,25 @@
+// carpet: butaglyph's own look, in the colors of an Azerbaijani carpet.
+// Madder red, indigo, saffron, teal and ivory woven into segments, with a
+// buta (the teardrop motif the project is named after) at each end.
+// Needs a Nerd Font and a truecolor terminal.
+.{
+    .order = .{ .text, .dir, .git_branch, .git_status, .duration, .status, .jobs, .line_break, .character },
+    .segments = .{ .open = "\u{e0b6}", .join = "\u{e0bc}", .close = "\u{e0bc}", .padding = " " },
+    .text = .{ .pieces = .{.{ .text = "❧", .style = .{ .fg = "#e6a532", .bold = true } }} },
+    .dir = .{
+        .style = .{ .fg = "#f8ecd4", .bg = "#7a1424>#b8323b", .bold = true },
+        .separator = " \u{e0b1} ",
+        .max_length = 36,
+    },
+    .git_branch = .{ .style = .{ .fg = "#f0b43c", .bg = "#24306e", .bold = true } },
+    .git_status = .{ .style = .{ .fg = "#f8ecd4", .bg = "#1f6f6a" } },
+    .duration = .{ .style = .{ .fg = "#24306e", .bg = "#e6a532", .bold = true } },
+    .status = .{ .style = .{ .fg = "#f8ecd4", .bg = "#4a0d16", .bold = true } },
+    .jobs = .{ .style = .{ .fg = "#24306e", .bg = "#f8ecd4" } },
+    .character = .{
+        .success_symbol = "╰─❧",
+        .failure_symbol = "╰─❧",
+        .success_style = .{ .fg = "#b8323b>#e6a532", .bold = true },
+        .failure_style = .{ .fg = "#e74c3c", .bold = true },
+    },
+}

@@ -10,6 +10,7 @@ const env_mod = @import("env.zig");
 const glyphs = @import("glyphs.zig");
 const module = @import("module.zig");
 const render = @import("render.zig");
+const presets = @import("presets");
 
 const scripts = struct {
     const bash = @embedFile("shell/bash.sh");
@@ -35,10 +36,13 @@ pub fn main(init: std.process.Init.Minimal) u8 {
     const io = threaded.io();
 
     var out_buf: [16 * 1024]u8 = undefined;
-    var out_file = Io.File.stdout().writer(io, &out_buf);
+    // Streaming, never positional: stdout may be a file others append to
+    // (`buta init zsh >> ~/.zshrc`), and writing at offset 0 would
+    // overwrite its beginning.
+    var out_file = Io.File.stdout().writerStreaming(io, &out_buf);
     const out = &out_file.interface;
     var err_buf: [1024]u8 = undefined;
-    var err_file = Io.File.stderr().writer(io, &err_buf);
+    var err_file = Io.File.stderr().writerStreaming(io, &err_buf);
     const err = &err_file.interface;
 
     // Windows converts the (UTF-16) arguments and environment once; both
@@ -61,7 +65,7 @@ fn run(io: Io, env: env_mod.Env, args: anytype, out: *Io.Writer, err: *Io.Writer
             error.UnknownCommand => "unknown command",
             error.MissingShell => "init: missing shell name",
             error.InvalidShell => "init: unsupported shell (expected bash, zsh, fish or powershell)",
-            error.UnexpectedArgument => "init: unexpected argument",
+            error.UnexpectedArgument => "unexpected argument",
             error.InvalidDaemonArgument => "daemon: expected `--detach`, `status` or `stop`",
         }, cli.usage });
         return 2;
@@ -72,6 +76,8 @@ fn run(io: Io, env: env_mod.Env, args: anytype, out: *Io.Writer, err: *Io.Writer
         .init => |shell| try writeInit(io, shell, out),
         .prompt => |p| prompt(io, env, p, out, err),
         .daemon => |opts| return daemon.main(io, env, opts, out, err),
+        .preset => |name| return printPreset(name, out, err),
+        .preview => |name| preview(io, env, name, out, err),
     }
     return 0;
 }
@@ -119,6 +125,74 @@ fn prompt(io: Io, env: env_mod.Env, args: cli.PromptArgs, out: *Io.Writer, err: 
     out.flush() catch {};
     err.flush() catch {};
     std.process.exit(0);
+}
+
+fn printPreset(name: ?[]const u8, out: *Io.Writer, err: *Io.Writer) !u8 {
+    const n = name orelse {
+        for (presets.all) |p| try out.print("{s: <12} {s}\n", .{ p.name, p.description() });
+        try out.writeAll("\nTry them with `buta preview`; install one with\n`buta preset <name> > ~/.config/butaglyph/config.zon`.\n");
+        return 0;
+    };
+    const p = presets.find(n) orelse {
+        try err.print("buta: no preset named '{s}' (see `buta preset`)\n", .{n});
+        return 2;
+    };
+    try out.writeAll(p.source);
+    return 0;
+}
+
+/// Draws a sample prompt (last command failed after 3.2 s, one job) in the
+/// current directory with every preset, or with one preset or config file.
+/// Never returns, like `prompt`: module tasks may outlive their deadline.
+fn preview(io: Io, env: env_mod.Env, name: ?[]const u8, out: *Io.Writer, err: *Io.Writer) noreturn {
+    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var arg_cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var home_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd = workingDir(io, env, null, &arg_cwd_buf, &cwd_buf);
+    const ctx: context.Context = .{
+        .io = io,
+        .env = env,
+        .cwd = cwd.logical,
+        .physical_cwd = cwd.physical,
+        .home = context.normalizeHome(homeDir(env, &home_buf)),
+        .status = 1,
+        .duration_ms = 3200,
+        .jobs = 1,
+        .shell = .plain,
+        .debug = env.flag("BUTA_DEBUG"),
+    };
+    const one = if (name) |n| presets.find(n) else null;
+    for (presets.all) |p| {
+        if (name != null and (one == null or !std.mem.eql(u8, p.name, one.?.name))) continue;
+        previewOne(&ctx, p.name, p.description(), config.parse(std.heap.page_allocator, p.source, p.name), out, err);
+    }
+    if (name != null and one == null) {
+        // Not a preset: a config file.
+        previewOne(&ctx, name.?, "", config.load(io, std.heap.page_allocator, name.?), out, err);
+    }
+    out.flush() catch {};
+    err.flush() catch {};
+    std.process.exit(0);
+}
+
+fn previewOne(ctx: *const context.Context, name: []const u8, description: []const u8, loaded: config.LoadResult, out: *Io.Writer, err: *Io.Writer) void {
+    if (loaded.problem) |msg| {
+        err.print("buta: {s}\n", .{msg}) catch {};
+        return;
+    }
+    // Each preview gets its own copies: a late module task of one must not
+    // touch the next one's.
+    const cfg = std.heap.page_allocator.create(config.Config) catch return;
+    cfg.* = loaded.config;
+    const rt = std.heap.page_allocator.create(module.Runtime) catch return;
+    rt.jobs = @splat(.{});
+    const slots = std.heap.page_allocator.create(module.Slots) catch return;
+    module.computeAll(ctx, cfg, rt, slots);
+    var line: render.Line = .{};
+    module.renderAll(slots, cfg, glyphs.get(cfg.glyphs), &line);
+    out.print("\x1b[2m{s}{s}{s}\x1b[0m\n", .{ name, if (description.len > 0) "  " else "", description }) catch {};
+    render.write(&line, .plain, out) catch {};
+    out.writeAll("\n\n") catch {};
 }
 
 const WorkingDir = struct { logical: []const u8, physical: []const u8 };
@@ -204,6 +278,19 @@ test trimTrailingSlashes {
     try std.testing.expectEqualStrings("/", trimTrailingSlashes("/"));
     // `//` is the start of a UNC path on Windows, the root elsewhere.
     try std.testing.expectEqualStrings(if (env_mod.is_windows) "//" else "/", trimTrailingSlashes("//"));
+}
+
+test "every preset parses" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    for (presets.all) |p| {
+        const r = config.parse(arena.allocator(), p.source, p.name);
+        if (r.problem) |msg| {
+            std.debug.print("{s}\n", .{msg});
+            return error.PresetDoesNotParse;
+        }
+        try std.testing.expect(p.description().len > 10);
+    }
 }
 
 test {

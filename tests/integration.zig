@@ -398,3 +398,19 @@ fn testPath() []const u8 {
     if (S.map == null) S.map = testing.environ.createMap(std.heap.page_allocator) catch return "/usr/bin:/bin";
     return S.map.?.get("PATH") orelse "/usr/bin:/bin";
 }
+
+test "output written to a shared file lands after what is already there" {
+    // `{ echo ...; buta init zsh; } > file`: the shell's descriptor has
+    // moved past the echo. Writing at offset 0 would overwrite it.
+    if (!haveShell("sh")) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try makeFixture(&tmp);
+    defer gpa.free(root);
+    const r = try run(&.{ "sh", "-c", "{ echo '# my settings'; \"$BUTA\" --version; \"$BUTA\" --version; } > rc" }, root, &.{});
+    defer r.deinit();
+    const rc = try tmp.dir.readFileAlloc(io, "rc", gpa, .unlimited);
+    defer gpa.free(rc);
+    try testing.expect(std.mem.startsWith(u8, rc, "# my settings\nbuta "));
+    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, rc, "buta "));
+}

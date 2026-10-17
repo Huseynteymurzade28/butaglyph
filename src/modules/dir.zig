@@ -24,6 +24,9 @@ pub const Config = struct {
     abbrev_len: u8 = 1,
     /// Trailing directories that are never abbreviated.
     full_dirs: u8 = 1,
+    /// Between directories: "/" or anything else, such as " ❯ " or " • ".
+    /// The root of an absolute path stays "/".
+    separator: []const u8 = "/",
 };
 
 pub const Data = struct {
@@ -54,7 +57,9 @@ pub fn render(data: *const Data, cfg: *const Config, _: *const Glyphs, line: *Li
 pub fn formatPath(w: *Writer, data: Data, cfg: *const Config) Writer.Error!void {
     const prefix = if (data.home_relative) cfg.home_symbol else "";
     const long = codepoints(prefix) + codepoints(data.path) > cfg.max_length;
-    if (!cfg.abbreviate or (cfg.max_length > 0 and !long)) {
+    const abbreviate = cfg.abbreviate and (cfg.max_length == 0 or long);
+    const sep = cfg.separator;
+    if (!abbreviate and std.mem.eql(u8, sep, "/")) {
         try w.writeAll(prefix);
         try w.writeAll(if (!data.home_relative and data.path.len == 0) "/" else data.path);
         return;
@@ -75,11 +80,17 @@ pub fn formatPath(w: *Writer, data: Data, cfg: *const Config) Writer.Error!void 
     var it = std.mem.tokenizeScalar(u8, data.path, '/');
     var i: usize = 0;
     while (it.next()) |comp| : (i += 1) {
-        if (!(drive and i == 0)) try w.writeByte('/');
+        // Slashes that belong to the root stay slashes: `/usr`, `C:/Users`,
+        // `//server/share/dir`.
+        if (drive and i == 0) {} else if (!data.home_relative and i <= root_comps) {
+            try w.writeByte('/');
+        } else {
+            try w.writeAll(sep);
+        }
         if (i < root_comps) {
             try w.writeAll(comp);
             if (drive and total == 1) try w.writeByte('/');
-        } else if (i + cfg.full_dirs >= total) {
+        } else if (!abbreviate or i + cfg.full_dirs >= total) {
             try w.writeAll(comp);
         } else {
             try w.writeAll(abbreviateComponent(comp, cfg.abbrev_len));
@@ -138,6 +149,15 @@ test "Windows paths keep their drive" {
     try expectPath("C:/Windows", "C:/Windows", null, .{});
     try expectPath("//server/share/dir", "//server/share/dir", null, .{ .max_length = 0 });
     try expectPath("~/d/src", "C:/Users/x/dev/src", "C:/Users/x", .{ .max_length = 0 });
+}
+
+test "custom separator" {
+    try expectPath("~ ❯ dev ❯ butaglyph", "/home/u/dev/butaglyph", "/home/u", .{ .separator = " ❯ " });
+    try expectPath("~ • d • butaglyph", "/home/u/dev/butaglyph", "/home/u", .{ .separator = " • ", .max_length = 0 });
+    try expectPath("/usr  local  share", "/usr/local/share", null, .{ .separator = "  " });
+    try expectPath("C:/Users  me", "C:/Users/me", null, .{ .separator = "  " });
+    try expectPath("//srv/share/a  b", "//srv/share/a/b", null, .{ .separator = "  " });
+    try expectPath("~", "/home/u", "/home/u", .{ .separator = " ❯ " });
 }
 
 test "max_length = 0 always abbreviates" {

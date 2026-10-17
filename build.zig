@@ -110,6 +110,7 @@ fn addButa(
             .imports = &.{
                 .{ .name = "build_options", .module = options.createModule() },
                 .{ .name = "git", .module = git },
+                .{ .name = "presets", .module = b.createModule(.{ .root_source_file = b.path("examples/presets.zig") }) },
             },
         }),
     });

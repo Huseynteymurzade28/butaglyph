@@ -45,6 +45,29 @@ pub const Color = union(enum) {
         return null;
     }
 
+    /// The 16 basic colors as xterm draws them, for blending.
+    const basic_rgb = [16][3]u8{
+        .{ 0, 0, 0 },       .{ 205, 0, 0 },   .{ 0, 205, 0 },   .{ 205, 205, 0 },
+        .{ 0, 0, 238 },     .{ 205, 0, 205 }, .{ 0, 205, 205 }, .{ 229, 229, 229 },
+        .{ 127, 127, 127 }, .{ 255, 0, 0 },   .{ 0, 255, 0 },   .{ 255, 255, 0 },
+        .{ 92, 92, 255 },   .{ 255, 0, 255 }, .{ 0, 255, 255 }, .{ 255, 255, 255 },
+    };
+
+    fn toRgb(c: Color) [3]u8 {
+        return switch (c) {
+            .rgb => |v| v,
+            .basic => |n| basic_rgb[n],
+            .index => |n| if (n < 16) basic_rgb[n] else if (n < 232) blk: {
+                const steps = [6]u8{ 0, 95, 135, 175, 215, 255 };
+                const k = n - 16;
+                break :blk .{ steps[k / 36], steps[(k / 6) % 6], steps[k % 6] };
+            } else blk: {
+                const v: u8 = 8 + (n - 232) * 10;
+                break :blk .{ v, v, v };
+            },
+        };
+    }
+
     fn writeSgr(c: Color, w: *Writer, background: bool) Writer.Error!void {
         switch (c) {
             .basic => |n| {
@@ -58,8 +81,131 @@ pub const Color = union(enum) {
     }
 };
 
+/// What a color string paints: one color, a gradient through several
+/// ("#ff0080>#7928ca>#00e5ff", blended in OKLab so the middle stays
+/// vivid), or a "rainbow". Gradients and rainbows run across the
+/// characters of a span, and across neighboring spans in the same style.
+pub const Paint = union(enum) {
+    none,
+    solid: Color,
+    gradient: struct { stops: [max_stops][3]u8, len: u8 },
+    rainbow,
+
+    pub const max_stops = 8;
+
+    pub fn parse(spec: ?[]const u8) Paint {
+        const s = std.mem.trim(u8, spec orelse return .none, " ");
+        if (std.mem.eql(u8, s, "rainbow")) return .rainbow;
+        if (std.mem.indexOfScalar(u8, s, '>') == null) return if (Color.parse(s)) |c| .{ .solid = c } else .none;
+        var g: @FieldType(Paint, "gradient") = .{ .stops = undefined, .len = 0 };
+        var it = std.mem.splitScalar(u8, s, '>');
+        while (it.next()) |part| {
+            const c = Color.parse(std.mem.trim(u8, part, " ")) orelse continue;
+            if (g.len == max_stops) break;
+            g.stops[g.len] = c.toRgb();
+            g.len += 1;
+        }
+        return switch (g.len) {
+            0 => .none,
+            1 => .{ .solid = .{ .rgb = g.stops[0] } },
+            else => .{ .gradient = g },
+        };
+    }
+
+    fn varies(p: Paint) bool {
+        return p == .gradient or p == .rainbow;
+    }
+
+    /// The color of character `i` of `n`.
+    fn at(p: Paint, i: usize, n: usize) ?Color {
+        const t: f32 = if (n <= 1) 0 else @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(n - 1));
+        return switch (p) {
+            .none => null,
+            .solid => |c| c,
+            .rainbow => .{ .rgb = hsv(t * 300, 0.78, 1) }, // red to magenta
+            .gradient => |g| blk: {
+                const pos = t * @as(f32, @floatFromInt(g.len - 1));
+                const k: usize = @min(@as(usize, @intFromFloat(pos)), g.len - 2);
+                break :blk .{ .rgb = mixOklab(g.stops[k], g.stops[k + 1], pos - @as(f32, @floatFromInt(k))) };
+            },
+        };
+    }
+
+    /// The color a gradient starts or ends with, as a color string slice of
+    /// `spec` (segment joints are drawn in it).
+    pub fn edge(spec: []const u8, last: bool) []const u8 {
+        const s = std.mem.trim(u8, spec, " ");
+        if (std.mem.eql(u8, s, "rainbow")) return if (last) "#ff38d1" else "#ff3838";
+        const i = if (last) std.mem.lastIndexOfScalar(u8, s, '>') else std.mem.indexOfScalar(u8, s, '>');
+        const part = if (i) |k| (if (last) s[k + 1 ..] else s[0..k]) else s;
+        return std.mem.trim(u8, part, " ");
+    }
+};
+
+fn hsv(h: f32, s: f32, v: f32) [3]u8 {
+    const c = v * s;
+    const hp = @mod(h, 360) / 60;
+    const x = c * (1 - @abs(@mod(hp, 2) - 1));
+    const rgb: [3]f32 = switch (@as(u3, @intFromFloat(hp))) {
+        0 => .{ c, x, 0 },
+        1 => .{ x, c, 0 },
+        2 => .{ 0, c, x },
+        3 => .{ 0, x, c },
+        4 => .{ x, 0, c },
+        else => .{ c, 0, x },
+    };
+    const m = v - c;
+    var out: [3]u8 = undefined;
+    for (&out, rgb) |*o, ch| o.* = @intFromFloat(@round(std.math.clamp(ch + m, 0, 1) * 255));
+    return out;
+}
+
+fn toLinear(c: u8) f32 {
+    const x = @as(f32, @floatFromInt(c)) / 255;
+    return if (x <= 0.04045) x / 12.92 else std.math.pow(f32, (x + 0.055) / 1.055, 2.4);
+}
+
+fn fromLinear(x: f32) u8 {
+    const v = std.math.clamp(x, 0, 1);
+    const s = if (v <= 0.0031308) v * 12.92 else 1.055 * std.math.pow(f32, v, 1.0 / 2.4) - 0.055;
+    return @intFromFloat(@round(std.math.clamp(s, 0, 1) * 255));
+}
+
+fn toOklab(c: [3]u8) [3]f32 {
+    const r = toLinear(c[0]);
+    const g = toLinear(c[1]);
+    const b = toLinear(c[2]);
+    const l = std.math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+    const m = std.math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+    const s = std.math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    return .{
+        0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+        1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+        0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s,
+    };
+}
+
+fn fromOklab(lab: [3]f32) [3]u8 {
+    const l = std.math.pow(f32, lab[0] + 0.3963377774 * lab[1] + 0.2158037573 * lab[2], 3);
+    const m = std.math.pow(f32, lab[0] - 0.1055613458 * lab[1] - 0.0638541728 * lab[2], 3);
+    const s = std.math.pow(f32, lab[0] - 0.0894841775 * lab[1] - 1.2914855480 * lab[2], 3);
+    return .{
+        fromLinear(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+        fromLinear(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+        fromLinear(-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s),
+    };
+}
+
+fn mixOklab(a: [3]u8, b: [3]u8, t: f32) [3]u8 {
+    const x = toOklab(a);
+    const y = toOklab(b);
+    var out: [3]f32 = undefined;
+    for (&out, x, y) |*o, p, q| o.* = p + (q - p) * t;
+    return fromOklab(out);
+}
+
 /// Style as written in config.zon. Colors stay strings until render time;
-/// an unrecognized color is simply not applied.
+/// an unrecognized color is simply not applied. See `Paint` for gradients.
 pub const Style = struct {
     fg: ?[]const u8 = null,
     bg: ?[]const u8 = null,
@@ -67,14 +213,33 @@ pub const Style = struct {
     dim: bool = false,
     italic: bool = false,
     underline: bool = false,
+    blink: bool = false,
+    /// Swaps foreground and background.
+    inverse: bool = false,
+    strikethrough: bool = false,
 
-    /// Writes the SGR sequence (e.g. "\x1b[1;36m") into `w`. Writes nothing
-    /// and returns false if the style has no visible effect.
-    fn writeSgr(s: Style, w: *Writer) Writer.Error!bool {
-        const fg = if (s.fg) |f| Color.parse(f) else null;
-        const bg = if (s.bg) |b| Color.parse(b) else null;
+    pub fn eql(a: Style, b: Style) bool {
+        inline for (@typeInfo(Style).@"struct".fields) |f| {
+            const x = @field(a, f.name);
+            const y = @field(b, f.name);
+            if (f.type == bool) {
+                if (x != y) return false;
+            } else if (x == null or y == null) {
+                if (x != null or y != null) return false;
+            } else if (!std.mem.eql(u8, x.?, y.?)) return false;
+        }
+        return true;
+    }
+
+    /// Writes the SGR sequence (e.g. "\x1b[1;36m") for this style with the
+    /// given colors into `w`. Writes nothing and returns false if it has no
+    /// visible effect.
+    fn writeSgr(s: Style, fg: ?Color, bg: ?Color, w: *Writer) Writer.Error!bool {
         var any = false;
-        const flags = [_]struct { bool, u8 }{ .{ s.bold, 1 }, .{ s.dim, 2 }, .{ s.italic, 3 }, .{ s.underline, 4 } };
+        const flags = [_]struct { bool, u8 }{
+            .{ s.bold, 1 },  .{ s.dim, 2 },     .{ s.italic, 3 },        .{ s.underline, 4 },
+            .{ s.blink, 5 }, .{ s.inverse, 7 }, .{ s.strikethrough, 9 },
+        };
         for (flags) |flag| {
             if (!flag[0]) continue;
             try w.writeAll(if (any) ";" else "\x1b[");
@@ -102,7 +267,7 @@ pub const Line = struct {
     scratch: [scratch_size]u8 = undefined,
     scratch_used: usize = 0,
 
-    pub const max_spans = 64;
+    pub const max_spans = 128;
     pub const scratch_size = 4096;
     pub const Error = error{NoSpaceLeft};
 
@@ -141,6 +306,14 @@ pub const Line = struct {
         try line.text(style, s);
     }
 
+    /// Inserts `spans` before position `at`.
+    pub fn insert(line: *Line, at: usize, spans: []const Span) Error!void {
+        if (line.len + spans.len > max_spans) return error.NoSpaceLeft;
+        std.mem.copyBackwards(Span, line.spans[at + spans.len .. line.len + spans.len], line.spans[at..line.len]);
+        @memcpy(line.spans[at..][0..spans.len], spans);
+        line.len += spans.len;
+    }
+
     pub fn newline(line: *Line) Error!void {
         try line.push(.{ .style = .{}, .kind = .newline, .text = "\n" });
     }
@@ -169,19 +342,52 @@ pub const Line = struct {
 /// editor treats them as zero-width; user-controlled text (paths, branch
 /// names) is quoted so the shell cannot interpret it.
 pub fn write(line: *const Line, shell: Shell, w: *Writer) Writer.Error!void {
-    for (line.items()) |span| {
-        switch (span.kind) {
-            .newline => try w.writeByte('\n'),
-            .text => {
-                var sgr_buf: [64]u8 = undefined;
-                var sgr: Writer = .fixed(&sgr_buf);
-                const styled = span.style.writeSgr(&sgr) catch false;
-                if (styled) try writeNonPrinting(shell, w, sgr.buffered());
-                try writeEscaped(shell, w, span.text);
-                if (styled) try writeNonPrinting(shell, w, "\x1b[0m");
-            },
+    const spans = line.items();
+    var i: usize = 0;
+    while (i < spans.len) {
+        const span = spans[i];
+        if (span.kind == .newline) {
+            try w.writeByte('\n');
+            i += 1;
+            continue;
         }
+        const fg = Paint.parse(span.style.fg);
+        const bg = Paint.parse(span.style.bg);
+        if (!fg.varies() and !bg.varies()) {
+            try writeStyled(shell, w, span.style, fg.at(0, 1), bg.at(0, 1), span.text);
+            i += 1;
+            continue;
+        }
+        // A gradient runs across this span and the following ones in the
+        // same style, one color per character.
+        var end = i + 1;
+        while (end < spans.len and spans[end].kind == .text and spans[end].style.eql(span.style)) end += 1;
+        var n: usize = 0;
+        for (spans[i..end]) |s| n += codepoints(s.text);
+        var k: usize = 0;
+        for (spans[i..end]) |s| {
+            var pos: usize = 0;
+            while (pos < s.text.len) : (k += 1) {
+                const len = @min(s.text.len - pos, std.unicode.utf8ByteSequenceLength(s.text[pos]) catch 1);
+                try writeStyled(shell, w, span.style, fg.at(k, n), bg.at(k, n), s.text[pos..][0..len]);
+                pos += len;
+            }
+        }
+        i = end;
     }
+}
+
+fn writeStyled(shell: Shell, w: *Writer, style: Style, fg: ?Color, bg: ?Color, text: []const u8) Writer.Error!void {
+    var sgr_buf: [96]u8 = undefined;
+    var sgr: Writer = .fixed(&sgr_buf);
+    const styled = style.writeSgr(fg, bg, &sgr) catch false;
+    if (styled) try writeNonPrinting(shell, w, sgr.buffered());
+    try writeEscaped(shell, w, text);
+    if (styled) try writeNonPrinting(shell, w, "\x1b[0m");
+}
+
+fn codepoints(s: []const u8) usize {
+    return std.unicode.utf8CountCodepoints(s) catch s.len;
 }
 
 fn writeNonPrinting(shell: Shell, w: *Writer, seq: []const u8) Writer.Error!void {
@@ -314,4 +520,51 @@ test "line capacity and rollback" {
     try std.testing.expectError(error.NoSpaceLeft, line.text(.{}, "overflow"));
     try std.testing.expectError(error.NoSpaceLeft, line.print(.{}, "{d}", .{1}));
     try std.testing.expectEqual(@as(usize, 0), line.scratch_used);
+}
+
+test "gradients run across a span and its same-styled neighbors" {
+    var line: Line = .{};
+    try line.text(.{ .fg = "#000000 > #ffffff" }, "ab");
+    try line.text(.{ .fg = "#000000 > #ffffff" }, "c");
+    try line.text(.{}, "!");
+    var buf: [512]u8 = undefined;
+    const out = try renderToString(&line, .plain, &buf);
+    try std.testing.expect(std.mem.startsWith(u8, out, "\x1b[38;2;0;0;0ma\x1b[0m"));
+    try std.testing.expect(std.mem.endsWith(u8, out, "\x1b[38;2;255;255;255mc\x1b[0m!"));
+    try std.testing.expectEqual(@as(usize, 3), std.mem.count(u8, out, "\x1b[38;2;"));
+    // bash still wraps every sequence.
+    const bash = try renderToString(&line, .bash, &buf);
+    try std.testing.expectEqual(@as(usize, 6), std.mem.count(u8, bash, "\\["));
+}
+
+test "rainbow, multi-stop gradients and gradient edges" {
+    var line: Line = .{};
+    try line.text(.{ .bg = "rainbow", .bold = true }, "xyz");
+    var buf: [512]u8 = undefined;
+    const out = try renderToString(&line, .plain, &buf);
+    try std.testing.expect(std.mem.startsWith(u8, out, "\x1b[1;48;2;255;56;56mx"));
+
+    const p = Paint.parse("red>#00ff00>blue");
+    try std.testing.expectEqual(@as(u8, 3), p.gradient.len);
+    try std.testing.expectEqual([3]u8{ 0, 255, 0 }, p.at(1, 3).?.rgb);
+    try std.testing.expectEqualStrings("red", Paint.edge("red > #00ff00 > blue", false));
+    try std.testing.expectEqualStrings("blue", Paint.edge("red > #00ff00 > blue", true));
+    try std.testing.expectEqualStrings("cyan", Paint.edge("cyan", true));
+    try std.testing.expect(Paint.parse("nope") == .none);
+    try std.testing.expect(Paint.parse("#zz0000>nope") == .none);
+}
+
+test "OKLab blending keeps the middle of a gradient bright" {
+    // Red to blue through OKLab is a vivid purple, not the muddy
+    // (128, 0, 128) of a plain RGB average.
+    const mid = mixOklab(.{ 255, 0, 0 }, .{ 0, 0, 255 }, 0.5);
+    try std.testing.expect(@as(u16, mid[0]) + mid[2] > 300);
+    try std.testing.expectEqual([3]u8{ 18, 52, 86 }, mixOklab(.{ 18, 52, 86 }, .{ 18, 52, 86 }, 0.3));
+}
+
+test "extra style flags" {
+    var line: Line = .{};
+    try line.text(.{ .blink = true, .inverse = true, .strikethrough = true }, "x");
+    var buf: [64]u8 = undefined;
+    try std.testing.expectEqualStrings("\x1b[5;7;9mx\x1b[0m", try renderToString(&line, .plain, &buf));
 }

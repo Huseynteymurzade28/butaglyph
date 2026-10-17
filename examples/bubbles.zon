@@ -1,0 +1,18 @@
+// bubbles: pastel pills, one per module.
+// Needs a Nerd Font and a truecolor terminal.
+.{
+    .order = .{ .dir, .git_branch, .git_status, .duration, .status, .jobs, .character },
+    .segments = .{ .open = "\u{e0b6}", .join = null, .close = "\u{e0b4}", .padding = "" },
+    .dir = .{ .style = .{ .fg = "#1e1e2e", .bg = "#89b4fa", .bold = true } },
+    .git_branch = .{ .style = .{ .fg = "#1e1e2e", .bg = "#cba6f7", .bold = true } },
+    .git_status = .{ .style = .{ .fg = "#1e1e2e", .bg = "#f9e2af", .bold = true } },
+    .duration = .{ .style = .{ .fg = "#1e1e2e", .bg = "#94e2d5", .bold = true } },
+    .status = .{ .style = .{ .fg = "#1e1e2e", .bg = "#f38ba8", .bold = true } },
+    .jobs = .{ .style = .{ .fg = "#1e1e2e", .bg = "#a6e3a1", .bold = true } },
+    .character = .{
+        .success_symbol = "❯",
+        .failure_symbol = "❯",
+        .success_style = .{ .fg = "#a6e3a1", .bold = true },
+        .failure_style = .{ .fg = "#f38ba8", .bold = true },
+    },
+}

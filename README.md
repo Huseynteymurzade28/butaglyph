@@ -4,7 +4,9 @@ A fast, shell-agnostic prompt engine written in Zig, in the spirit of
 Starship and Oh My Posh. The command is `buta`. It runs on Linux, macOS
 and Windows, in bash, zsh, fish and PowerShell.
 
-<p align="center"><img src="docs/demo.gif" alt="butaglyph in zsh: a file is edited, a new file appears, a change is staged, a slow command fails, a commit is made and fetched, and the prompt follows every step" width="760"></p>
+<p align="center"><img src="docs/demo.gif" alt="butaglyph's carpet preset in zsh: crimson, indigo, teal and saffron segments; a file is edited, a new file appears, a change is staged, a slow command fails, a commit is made and fetched, and the prompt follows every step" width="760"></p>
+
+<p align="center"><i>The <code>carpet</code> preset: butaglyph's own look, in the colors of an Azerbaijani carpet.</i></p>
 
 * **Fast.** About 1 ms per prompt in a git repository, fork and exec
   included, with its own git reader (no `git` subprocess, no libgit2). An
@@ -16,6 +18,11 @@ and Windows, in bash, zsh, fish and PowerShell.
   files (with `.gitignore` rules applied exactly as git applies them), and
   commits ahead of and behind the upstream. The test suite checks every
   answer against the real `git status`.
+* **As loud or as quiet as you like.** Gradients through any number of
+  colors (blended in OKLab, so they stay vivid), rainbows, powerline
+  segments that join themselves with flame, pixel, slant or round edges,
+  ornaments, and ten presets to start from. `buta preview` shows them all
+  in your own terminal.
 
 ## The name
 
@@ -142,23 +149,114 @@ config never costs you the prompt.
 
 ### Presets
 
-[`examples/`](examples) holds ready-made configs. Use one with
-`BUTA_CONFIG=/path/to/examples/minimal.zon`, or copy it to
-`~/.config/butaglyph/config.zon` and change it from there.
+<p align="center"><img src="docs/gallery.png" alt="buta preview: the ten built-in presets drawn in one terminal" width="760"></p>
 
-| [`minimal`](examples/minimal.zon) | [`ascii`](examples/ascii.zon) |
+Ten presets are built in. `buta preview` draws a sample prompt with each
+of them (in the current directory, so you see your own repository), and
+`buta preset` lists them:
+
+```sh
+buta preview                  # every preset
+buta preview carpet           # one preset, or a config file you are writing
+buta preset carpet > ~/.config/butaglyph/config.zon   # make it yours
+```
+
+The sources are in [`examples/`](examples); copy one and change it from
+there.
+
+| [`carpet`](examples/carpet.zon) | [`neon`](examples/neon.zon) |
 |:---:|:---:|
-| <img src="docs/preset-minimal.png" alt="minimal preset" width="400"> | <img src="docs/preset-ascii.png" alt="ascii preset" width="400"> |
-| One line, no icons, any font. | The default layout in plain ASCII. |
+| <img src="docs/preset-carpet.png" alt="carpet preset" width="400"> | <img src="docs/preset-neon.png" alt="neon preset" width="400"> |
+| butaglyph's own look, in the colors of an Azerbaijani carpet. | Synthwave segments that fade in through `░▒▓`. |
+| [`acid`](examples/acid.zon) | [`pixel`](examples/pixel.zon) |
+| <img src="docs/preset-acid.png" alt="acid preset" width="400"> | <img src="docs/preset-pixel.png" alt="pixel preset" width="400"> |
+| Rainbows, flames and blinking. Too much, on purpose. | An 8-bit handheld, four greens and pixelated edges. |
+| [`aurora`](examples/aurora.zon) | [`bubbles`](examples/bubbles.zon) |
+| <img src="docs/preset-aurora.png" alt="aurora preset" width="400"> | <img src="docs/preset-bubbles.png" alt="bubbles preset" width="400"> |
+| No boxes, just soft gradients of light. | Pastel pills, one per module. |
 | [`tokyo-night`](examples/tokyo-night.zon) | [`two-line`](examples/two-line.zon) |
 | <img src="docs/preset-tokyo-night.png" alt="tokyo-night preset" width="400"> | <img src="docs/preset-two-line.png" alt="two-line preset" width="400"> |
-| Truecolor, with `·` between segments. | Details above, the command below. |
+| The Tokyo Night palette, with dots between modules. | Details above, the command below. |
+| [`minimal`](examples/minimal.zon) | [`ascii`](examples/ascii.zon) |
+| <img src="docs/preset-minimal.png" alt="minimal preset" width="400"> | <img src="docs/preset-ascii.png" alt="ascii preset" width="400"> |
+| One line, no icons, any font. | The default layout in plain ASCII. |
+
+Without a config file you get the default look:
+
+<p align="center"><img src="docs/hero.png" alt="the default look in zsh, following a file edit, a new file, staging, a failed command, a slow command, a commit and a fetch" width="640"></p>
+
+### Styling
+
+Every `style` (and `success_style`/`failure_style`) takes:
+
+```zig
+.{
+    .fg = "#ff2a6d",          // "red", "bright_cyan", "208" or "#rrggbb"
+    .bg = "#7a1424>#b8323b",  // a gradient: two or more colors joined by ">"
+    .bold = true, .dim = false, .italic = false, .underline = false,
+    .blink = false, .inverse = false, .strikethrough = false,
+}
+```
+
+* **Gradients.** `"#ff0080>#7928ca>#00e5ff"` runs across the module's
+  text, one color per character, through up to eight stops. The colors are
+  blended in [OKLab](https://bottosson.github.io/posts/oklab/), so a red
+  to blue gradient passes through purple instead of mud. Named and 256
+  colors work as stops too.
+* **`"rainbow"`** runs through the whole spectrum, for `fg` or `bg`.
+* Gradients need a truecolor terminal. Most terminals are; where one
+  isn't, the colors are approximated or ignored, and the text still shows.
+
+**Segments.** With `.segments` set, every module that has a background
+becomes a segment, and neighboring segments are joined by a glyph drawn
+in both of their colors (the edges of a gradient, if they have one).
+Modules without a background are drawn as usual, between runs of
+segments.
+
+```zig
+.segments = .{
+    .open = "\u{e0b6}",  // before a run of segments
+    .join = "\u{e0b0}",  // between two segments; null: separate pills
+    .close = "\u{e0b0}", // after a run
+    .padding = " ",      // inside each segment, on both sides
+},
+```
+
+Some shapes from the Nerd Font set (and plain Unicode, which needs no
+special font):
+
+| Shape     | open       | join       | close      |
+|-----------|------------|------------|------------|
+| arrow     | `\u{e0b2}` | `\u{e0b0}` | `\u{e0b0}` |
+| round     | `\u{e0b6}` | `\u{e0b4}` | `\u{e0b4}` |
+| slant     | `\u{e0ba}` | `\u{e0bc}` | `\u{e0bc}` |
+| flame     | `\u{e0c2}` | `\u{e0c0}` | `\u{e0c0}` |
+| pixel     | `\u{e0c7}` | `\u{e0c6}` | `\u{e0c6}` |
+| shade     | `░▒▓`      | `\u{e0b0}` | `▓▒░`      |
+| pills     | `\u{e0b6}` | `null`     | `\u{e0b4}` |
+
+**Ornaments.** The `text` module draws fixed pieces of styled text:
+motifs, frames, labels. List `.text` in `order` wherever it should go
+(several times if you like):
+
+```zig
+.order = .{ .text, .dir, .git_branch, .line_break, .character },
+.text = .{ .pieces = .{
+    .{ .text = "╭─", .style = .{ .fg = "#585b70" } },
+    .{ .text = "❧", .style = .{ .fg = "#e6a532>#b8323b" } },
+} },
+.character = .{ .success_symbol = "╰─❯" },
+```
+
+**Paths.** `.dir = .{ .separator = " ❯ " }` draws `~ ❯ dev ❯ butaglyph`;
+any string works (`" \u{e0b1} "` for a powerline chevron, `" • "`,
+`" ∕ "`). The root of an absolute path stays `/`.
 
 ### Modules
 
 | Module       | Shows                                                         | Main options |
 |--------------|---------------------------------------------------------------|--------------|
-| `dir`        | Working directory, `$HOME` as `~`, fish-style abbreviation of long paths (UTF-8 aware). Windows drives and UNC roots are kept whole | `home_symbol`, `abbreviate`, `max_length`, `abbrev_len`, `full_dirs` |
+| `dir`        | Working directory, `$HOME` as `~`, fish-style abbreviation of long paths (UTF-8 aware). Windows drives and UNC roots are kept whole | `home_symbol`, `separator`, `abbreviate`, `max_length`, `abbrev_len`, `full_dirs` |
 | `git_branch` | Branch from `.git/HEAD`, or the short hash when HEAD is detached. Works in subdirectories, worktrees and submodules (`.git` files with `gitdir:`) | `symbol`, `detached_symbol`, `hash_length`, `max_length`, `timeout_ms` |
 | `git_status` | Conflicted (`=`), staged (`+`), modified (`!`), deleted (`✘`) and untracked (`?`) paths, and commits ahead of (`⇡`) and behind (`⇣`) the upstream. Hidden when the tree is clean and in sync | `*_symbol`, `show_counts`, `untracked`, `ahead_behind`, `worktree`, `timeout_ms` |
 | `status`     | The last exit code, if non-zero. `130` is shown as `INT`, and so on | `symbol`, `signal_names` |
@@ -166,9 +264,11 @@ config never costs you the prompt.
 | `jobs`       | Number of background jobs. Not in the default order           | `symbol`, `min`, `count_from` |
 | `character`  | The prompt symbol: green on success, red on failure           | `success_symbol`, `failure_symbol`, `*_style`, `suffix` |
 | `line_break` | A newline, for multi-line prompts                             | none |
+| `text`       | Fixed pieces of styled text: ornaments, frames, labels        | `pieces` |
 
-Every module except `line_break` has a `style` (or `success_style`/`failure_style`) and a
-`symbol` override; leaving `symbol` unset uses the active glyph set.
+Every module except `line_break` and `text` has a `style` (or
+`success_style`/`failure_style`) and a `symbol` override; leaving `symbol`
+unset uses the active glyph set.
 
 Untracked files are counted like `git status` does: an untracked
 directory counts once (`dir/`), and the repository's
@@ -326,7 +426,7 @@ src/
   module.zig         module interface, registry, compute/render drivers
   config.zig         ZON config loading
   glyphs.zig         Nerd Font and ASCII glyph sets
-  render.zig         spans, ANSI, per-shell wrapping and quoting
+  render.zig         spans, colors, gradients (OKLab), ANSI, per-shell quoting
   git/               the git reader (its own module, imported as "git")
     repo.zig         discovery, worktrees (.git files, commondir), HEAD
     refs.zig         loose refs, packed-refs, symbolic refs
@@ -340,7 +440,7 @@ src/
     status.zig       staged/modified/deleted/conflicted/untracked, ahead/behind
   modules/*.zig      one file per module
   shell/             init scripts (embedded with @embedFile)
-examples/*.zon       presets
+examples/            presets (embedded in the binary by presets.zig)
 docs/tools/          scripts that regenerate the screenshots and the GIF
 tests/integration.zig  drives the real binary and real shells
 tests/git_compat.zig   compares the git reader with the real git CLI
@@ -356,7 +456,7 @@ zig build bench   # 1000 × `buta prompt` in ReleaseFast: mean / p50 / p99
 zig build bench -- 5000
 tests/lineedit.sh bash   # interactive cursor check in tmux (also: zsh)
 zig build test -Dtarget=x86_64-windows -fwine   # the Windows build, under wine
-docs/tools/demo.sh       # regenerate docs/*.png and docs/demo.gif
+docs/tools/demo.sh       # regenerate docs/*.png and docs/demo.gif from real shells
 ```
 
 CI (`.github/workflows/ci.yml`) runs the tests on Linux, macOS and Windows,
@@ -406,6 +506,10 @@ the daemon.
   after an upgrade; the daemon runs on macOS (kqueue); buta builds and
   runs on Windows, with PowerShell integration; presets, screenshots, CI
   on three systems and release binaries.
+* **Phase 5 (done): looks.** Gradients and rainbows blended in OKLab,
+  self-joining segments with any edge shape, the `text` module for
+  ornaments, path separators, more style flags, ten presets embedded in
+  the binary, and `buta preview` / `buta preset` to try and install them.
 
 Known gaps:
 

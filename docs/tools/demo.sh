@@ -87,7 +87,7 @@ BUTA_CONFIG=/nonexistent play hero "$(zsh_with "")" 86 22 \
 python3 "$root/docs/tools/render.py" "$work/hero.ans" "$out/hero.png" --title "zsh — ~/projects/carpet" --cols 86
 
 # 2. The presets in examples/, on the same dirty repository.
-for preset in minimal ascii tokyo-night two-line; do
+for preset in carpet neon acid pixel aurora bubbles tokyo-night two-line minimal ascii; do
     setup_repo
     play "preset-$preset" "$(zsh_with "$root/examples/$preset.zon")" 70 10 \
         'echo "ornament" >> motifs.txt; touch sketch.svg' \
@@ -95,7 +95,12 @@ for preset in minimal ascii tokyo-night two-line; do
     python3 "$root/docs/tools/render.py" "$work/preset-$preset.ans" "$out/preset-$preset.png" --title "examples/$preset.zon" --cols 70
 done
 
-# 3. PowerShell.
+# 3. Every preset at once, as `buta preview` draws them.
+setup_repo
+play gallery "$(zsh_with "")" 84 44 "echo ornament >> motifs.txt; touch sketch.svg; clear; '$bin' preview"
+python3 "$root/docs/tools/render.py" "$work/gallery.ans" "$out/gallery.png" --title "buta preview" --cols 84
+
+# 4. PowerShell.
 if [[ -n ${PWSH:-} ]]; then
     setup_repo
     play pwsh "$PWSH -NoLogo -NoProfile -NoExit -Command \"Invoke-Expression (& '$bin' init powershell | Out-String)\"" 76 14 \
@@ -104,10 +109,11 @@ if [[ -n ${PWSH:-} ]]; then
         'Start-Sleep 2.6'
     python3 "$root/docs/tools/render.py" "$work/pwsh.ans" "$out/powershell.png" --title "PowerShell 7" --cols 76
 fi
-# 4. The animated tour, recorded from a real terminal session.
+# 5. The animated tour, recorded from a real terminal session, in the
+# project's own preset.
 if command -v agg > /dev/null; then
     setup_repo
-    (cd "$repo" && python3 "$root/docs/tools/record.py" "$work/demo.cast" 80 15 "$(zsh_with "")" \
+    (cd "$repo" && python3 "$root/docs/tools/record.py" "$work/demo.cast" 80 15 "$(zsh_with "$root/examples/carpet.zon")" \
         'echo "ornament" >> motifs.txt' \
         'touch sketch.svg' \
         'git add motifs.txt' \

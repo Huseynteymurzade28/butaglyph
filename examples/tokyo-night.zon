@@ -1,5 +1,5 @@
-// tokyo-night: truecolor colors from the Tokyo Night palette, with a dot
-// between segments and the job count shown.
+// tokyo-night: the Tokyo Night palette, with dots between modules.
+// Truecolor, and the job count is always shown.
 .{
     .separator = " · ",
     .order = .{ .dir, .git_branch, .git_status, .duration, .status, .jobs, .line_break, .character },

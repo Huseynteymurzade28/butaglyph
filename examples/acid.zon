@@ -1,0 +1,24 @@
+// acid: rainbows, flames and blinking. Too much, on purpose.
+// Rainbow segments with flame edges, a branch name in every color at once,
+// a status that blinks. Needs a Nerd Font and a truecolor terminal.
+.{
+    .order = .{ .text, .dir, .git_branch, .git_status, .duration, .status, .jobs, .line_break, .character },
+    .segments = .{ .open = "\u{e0c2} ", .join = "\u{e0c0} ", .close = "\u{e0c0}", .padding = " " },
+    .text = .{ .pieces = .{.{ .text = "✺", .style = .{ .fg = "rainbow", .bold = true } }} },
+    .dir = .{
+        .style = .{ .fg = "#000000", .bg = "rainbow", .bold = true },
+        .separator = " ⟡ ",
+        .max_length = 0,
+    },
+    .git_branch = .{ .style = .{ .fg = "rainbow", .bg = "#000000", .bold = true, .italic = true } },
+    .git_status = .{ .style = .{ .fg = "#000000", .bg = "#39ff14>#ff00ff", .bold = true } },
+    .duration = .{ .style = .{ .fg = "#000000", .bg = "#ffff00", .bold = true, .italic = true } },
+    .status = .{ .style = .{ .fg = "#ffff00", .bg = "#ff0000", .bold = true, .blink = true } },
+    .jobs = .{ .style = .{ .fg = "#000000", .bg = "#00ffff" } },
+    .character = .{
+        .success_symbol = "⟫⟫⟫⟫",
+        .failure_symbol = "✖✖✖✖",
+        .success_style = .{ .fg = "rainbow", .bold = true },
+        .failure_style = .{ .fg = "#ff0000>#ffff00", .bold = true, .blink = true },
+    },
+}

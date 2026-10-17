@@ -1,5 +1,5 @@
-// two-line: details on the first line, the command on the second, with a
-// left border tying them together.
+// two-line: details above, the command below.
+// A left border ties the two lines together.
 .{
     .order = .{ .dir, .git_branch, .git_status, .jobs, .duration, .status, .line_break, .character },
     .dir = .{ .style = .{ .fg = "cyan", .bold = true }, .abbreviate = false },

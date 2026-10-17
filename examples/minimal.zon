@@ -1,5 +1,5 @@
-// minimal: one line, no icons, only what changes your next command.
-// Works with any font.
+// minimal: one line, no icons, any font.
+// Only what changes your next command.
 .{
     .glyphs = .ascii,
     .order = .{ .dir, .git_branch, .git_status, .status, .character },
