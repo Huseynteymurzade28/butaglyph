@@ -114,6 +114,9 @@ const Fixture = struct {
         const b = try f.theirs(sub);
         if (!std.meta.eql(a, b)) {
             std.debug.print("[{s}] ours:   {any}\n[{s}] theirs: {any}\n", .{ label, a, label, b });
+            const raw = f.run(sub, &.{ "status", "--porcelain=v2", "--no-renames" }) catch "";
+            const files = f.run(sub, &.{ "ls-files", "-s" }) catch "";
+            std.debug.print("git status:\n{s}git ls-files -s:\n{s}\n", .{ raw, files });
             return error.StatusMismatch;
         }
     }

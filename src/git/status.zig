@@ -542,6 +542,8 @@ fn hashFile(io: Io, dir: Io.Dir, path: []const u8, size: u64) !Oid {
 fn hashLink(io: Io, dir: Io.Dir, path: []const u8) !Oid {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const n = try dir.readLink(io, path, &buf);
+    // Windows stores `..\x`; Git for Windows reads it back as `../x`.
+    if (builtin.os.tag == .windows) std.mem.replaceScalar(u8, buf[0..n], '\\', '/');
     return Oid.hashObject("blob", buf[0..n]);
 }
 
