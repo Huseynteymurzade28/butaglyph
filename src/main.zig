@@ -76,7 +76,7 @@ fn run(io: Io, env: env_mod.Env, args: anytype, out: *Io.Writer, err: *Io.Writer
         .init => |shell| try writeInit(io, shell, out),
         .prompt => |p| prompt(io, env, p, out, err),
         .daemon => |opts| return daemon.main(io, env, opts, out, err),
-        .preset => |name| return printPreset(name, out, err),
+        .preset => |p| return if (p.install) installPreset(io, env, p.name.?, out, err) else printPreset(p.name, out, err),
         .preview => |name| preview(io, env, name, out, err),
     }
     return 0;
@@ -130,7 +130,7 @@ fn prompt(io: Io, env: env_mod.Env, args: cli.PromptArgs, out: *Io.Writer, err: 
 fn printPreset(name: ?[]const u8, out: *Io.Writer, err: *Io.Writer) !u8 {
     const n = name orelse {
         for (presets.all) |p| try out.print("{s: <12} {s}\n", .{ p.name, p.description() });
-        try out.writeAll("\nTry them with `buta preview`; install one with\n`buta preset <name> > ~/.config/butaglyph/config.zon`.\n");
+        try out.writeAll("\nTry them with `buta preview`; make one yours with `buta preset <name> --install`.\n");
         return 0;
     };
     const p = presets.find(n) orelse {
@@ -138,6 +138,43 @@ fn printPreset(name: ?[]const u8, out: *Io.Writer, err: *Io.Writer) !u8 {
         return 2;
     };
     try out.writeAll(p.source);
+    return 0;
+}
+
+/// Writes a preset to the config file, keeping the old file as `.bak`.
+/// Writing it here, rather than `buta preset x > file`, avoids PowerShell
+/// 5.1's `>`, which re-encodes the text.
+fn installPreset(io: Io, env: env_mod.Env, name: []const u8, out: *Io.Writer, err: *Io.Writer) !u8 {
+    const p = presets.find(name) orelse {
+        try err.print("buta: no preset named '{s}' (see `buta preset`)\n", .{name});
+        return 2;
+    };
+    var home_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = config.path(&path_buf, env, context.normalizeHome(homeDir(env, &home_buf))) orelse {
+        try err.writeAll("buta: no config location: set BUTA_CONFIG or HOME\n");
+        return 1;
+    };
+    const cwd = Io.Dir.cwd();
+    if (std.fs.path.dirname(path)) |dir| cwd.createDirPath(io, dir) catch |e| {
+        try err.print("buta: {s}: {s}\n", .{ dir, @errorName(e) });
+        return 1;
+    };
+    var bak_buf: [std.fs.max_path_bytes + 4]u8 = undefined;
+    const bak = try std.fmt.bufPrint(&bak_buf, "{s}.bak", .{path});
+    const had_config = if (cwd.rename(path, cwd, bak, io)) true else |e| switch (e) {
+        error.FileNotFound => false,
+        else => {
+            try err.print("buta: cannot keep the old config as {s}: {s}\n", .{ bak, @errorName(e) });
+            return 1;
+        },
+    };
+    cwd.writeFile(io, .{ .sub_path = path, .data = p.source }) catch |e| {
+        try err.print("buta: {s}: {s}\n", .{ path, @errorName(e) });
+        return 1;
+    };
+    try out.print("buta: installed '{s}' as {s}\n", .{ name, path });
+    if (had_config) try out.print("buta: your previous config is {s}\n", .{bak});
     return 0;
 }
 

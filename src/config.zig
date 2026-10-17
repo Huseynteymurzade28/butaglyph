@@ -89,7 +89,11 @@ pub fn load(io: Io, arena: Allocator, file_path: []const u8) LoadResult {
     return parse(arena, source, file_path);
 }
 
-pub fn parse(arena: Allocator, source: [:0]const u8, file_path: []const u8) LoadResult {
+pub fn parse(arena: Allocator, raw: [:0]const u8, file_path: []const u8) LoadResult {
+    const source = decode(arena, raw) orelse return .{
+        .config = .{},
+        .problem = std.fmt.allocPrint(arena, "{s}: not valid UTF-16", .{file_path}) catch "config: bad encoding",
+    };
     var diag: std.zon.parse.Diagnostics = .{};
     const cfg = std.zon.parse.fromSliceAlloc(Config, arena, source, &diag, .{ .free_on_error = false }) catch |err| {
         const msg = switch (err) {
@@ -102,6 +106,16 @@ pub fn parse(arena: Allocator, source: [:0]const u8, file_path: []const u8) Load
         };
     };
     return .{ .config = cfg };
+}
+
+/// UTF-8, without a byte order mark. Windows editors and PowerShell 5.1's
+/// `>` write a BOM, or UTF-16: both are accepted.
+fn decode(arena: Allocator, raw: [:0]const u8) ?[:0]const u8 {
+    if (std.mem.startsWith(u8, raw, "\xEF\xBB\xBF")) return raw[3.. :0];
+    if (!std.mem.startsWith(u8, raw, "\xFF\xFE") or raw.len % 2 != 0) return raw;
+    const units = arena.alloc(u16, raw.len / 2 - 1) catch return null;
+    for (units, 0..) |*u, i| u.* = std.mem.readInt(u16, raw[2 + 2 * i ..][0..2], .little);
+    return std.unicode.utf16LeToUtf8AllocZ(arena, units) catch null;
 }
 
 const TestEnv = struct {
@@ -163,6 +177,24 @@ test "config overrides order, glyphs, colors and symbols" {
     try std.testing.expectEqualStrings("$", c.character.success_symbol.?);
     // Untouched sections keep their defaults.
     try std.testing.expectEqualStrings("red", c.status.style.fg.?);
+}
+
+test "configs saved with a BOM or as UTF-16 (Windows) are read" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const text = ".{ .separator = \"❧\" }";
+    const bom = parse(a, "\xEF\xBB\xBF" ++ text, "t.zon");
+    try std.testing.expectEqual(@as(?[]const u8, null), bom.problem);
+    try std.testing.expectEqualStrings("❧", bom.config.separator);
+
+    var utf16: std.ArrayList(u8) = .empty;
+    try utf16.appendSlice(a, "\xFF\xFE");
+    const units = try std.unicode.utf8ToUtf16LeAlloc(a, text);
+    for (units) |u| try utf16.appendSlice(a, &std.mem.toBytes(std.mem.nativeToLittle(u16, u)));
+    const r = parse(a, try a.dupeZ(u8, utf16.items), "t.zon");
+    try std.testing.expectEqual(@as(?[]const u8, null), r.problem);
+    try std.testing.expectEqualStrings("❧", r.config.separator);
 }
 
 test "invalid config falls back to defaults with a located message" {

@@ -22,12 +22,18 @@ pub const Command = union(enum) {
     prompt: PromptArgs,
     init: InitShell,
     daemon: daemon.Options,
-    /// List the built-in presets, or print one.
-    preset: ?[]const u8,
+    /// List the built-in presets, print one, or install one.
+    preset: PresetArgs,
     /// Draw sample prompts with every preset, one preset, or a config file.
     preview: ?[]const u8,
     version,
     help,
+};
+
+pub const PresetArgs = struct {
+    name: ?[]const u8 = null,
+    /// Write it to the config file (keeping the old one as .bak).
+    install: bool = false,
 };
 
 pub const Error = error{ UnknownCommand, MissingShell, InvalidShell, UnexpectedArgument, InvalidDaemonArgument };
@@ -48,7 +54,8 @@ pub const usage =
     \\  buta preview [preset|file]   Draw sample prompts here, with every preset
     \\                               (or one preset, or a config file)
     \\  buta preset                  List the built-in presets
-    \\  buta preset <name>           Print one, e.g. buta preset carpet > ~/.config/butaglyph/config.zon
+    \\  buta preset <name>           Print one
+    \\  buta preset <name> --install Make it your config (the old one is kept as .bak)
     \\  buta --version
     \\  buta --help
     \\
@@ -70,10 +77,22 @@ pub fn parse(args: anytype) Error!Command {
         return .{ .init = shell };
     }
     if (eql(cmd, "prompt")) return .{ .prompt = parsePrompt(args) };
-    if (eql(cmd, "preset") or eql(cmd, "preview")) {
+    if (eql(cmd, "preview")) {
         const name = args.next();
         if (args.next() != null) return error.UnexpectedArgument;
-        return if (eql(cmd, "preset")) .{ .preset = name } else .{ .preview = name };
+        return .{ .preview = name };
+    }
+    if (eql(cmd, "preset")) {
+        var p: PresetArgs = .{};
+        while (args.next()) |arg| {
+            if (eql(arg, "--install")) {
+                p.install = true;
+            } else if (p.name == null and !std.mem.startsWith(u8, arg, "-")) {
+                p.name = arg;
+            } else return error.UnexpectedArgument;
+        }
+        if (p.install and p.name == null) return error.UnexpectedArgument;
+        return .{ .preset = p };
     }
     if (eql(cmd, "daemon")) {
         var opts: daemon.Options = .{};
@@ -164,8 +183,11 @@ test "init and meta commands" {
 }
 
 test "preset and preview" {
-    try std.testing.expectEqualStrings("carpet", (try testParse(&.{ "preset", "carpet" })).preset.?);
-    try std.testing.expectEqual(@as(?[]const u8, null), (try testParse(&.{"preset"})).preset);
+    try std.testing.expectEqualStrings("carpet", (try testParse(&.{ "preset", "carpet" })).preset.name.?);
+    try std.testing.expectEqual(@as(?[]const u8, null), (try testParse(&.{"preset"})).preset.name);
+    const inst = (try testParse(&.{ "preset", "--install", "neon" })).preset;
+    try std.testing.expect(inst.install and std.mem.eql(u8, inst.name.?, "neon"));
+    try std.testing.expectError(error.UnexpectedArgument, testParse(&.{ "preset", "--install" }));
     try std.testing.expectEqual(@as(?[]const u8, null), (try testParse(&.{"preview"})).preview);
     try std.testing.expectError(error.UnexpectedArgument, testParse(&.{ "preview", "a", "b" }));
 }

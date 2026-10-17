@@ -42,16 +42,48 @@ zig build -Doptimize=ReleaseFast
 install -Dm755 zig-out/bin/buta ~/.local/bin/buta
 ```
 
-**Windows** (PowerShell)
+**Windows quick start** (PowerShell; no Zig needed)
+
+1. Download `buta-<version>-x86_64-windows.zip` from the
+   [Releases](https://github.com/Huseynteymurzade28/butaglyph/releases)
+   page (`aarch64-windows` on ARM), and put `buta.exe` on your PATH:
+
+   ```powershell
+   $bin = "$HOME\.local\bin"
+   New-Item -ItemType Directory -Force $bin | Out-Null
+   Expand-Archive "$HOME\Downloads\buta-*-x86_64-windows.zip" -DestinationPath $bin -Force
+   $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+   [Environment]::SetEnvironmentVariable('Path', "$userPath;$bin", 'User')
+   ```
+
+2. Install a [Nerd Font](https://www.nerdfonts.com/font-downloads) (for
+   example *JetBrainsMono Nerd Font*: unzip, select the `.ttf` files,
+   right-click, *Install*), and choose it in Windows Terminal: *Settings →
+   Profiles → Defaults → Appearance → Font face*.
+
+3. Load buta in your PowerShell profile. Open a **new** terminal (so the
+   PATH change applies) and run:
+
+   ```powershell
+   # Windows PowerShell 5.1 runs no profile script until this is allowed:
+   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+   New-Item -ItemType File -Force $PROFILE | Out-Null
+   Add-Content $PROFILE 'Invoke-Expression (& buta init powershell | Out-String)'
+   . $PROFILE
+   ```
+
+4. Pick a look: `buta preview` shows every preset, then for example
+   `buta preset carpet --install`. To change it further, edit
+   `~\.config\butaglyph\config.zon` (see [Configuration](#configuration));
+   the next prompt picks up the change, and `buta preview <file>` shows a
+   file you are still writing.
+
+**Windows, from source** (needs Zig 0.16.0)
 
 ```powershell
 git clone https://github.com/Huseynteymurzade28/butaglyph; cd butaglyph
 zig build -Doptimize=ReleaseFast
-New-Item -ItemType Directory -Force "$HOME\.local\bin" | Out-Null
 Copy-Item zig-out\bin\buta.exe "$HOME\.local\bin\"
-# Put it on your PATH (once; takes effect in new terminals):
-$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-[Environment]::SetEnvironmentVariable('Path', "$userPath;$HOME\.local\bin", 'User')
 ```
 
 Zig cross-compiles, so any machine can build for any other:
@@ -158,7 +190,7 @@ of them (in the current directory, so you see your own repository), and
 ```sh
 buta preview                  # every preset
 buta preview carpet           # one preset, or a config file you are writing
-buta preset carpet > ~/.config/butaglyph/config.zon   # make it yours
+buta preset carpet --install  # make it yours (the old config is kept as .bak)
 ```
 
 The sources are in [`examples/`](examples); copy one and change it from
