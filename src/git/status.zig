@@ -481,6 +481,11 @@ fn worktreeState(io: Io, dir: Io.Dir, e: *const index_mod.Entry, index_mtime_ns:
         .directory => return .deleted,
         else => return .modified,
     }
+    // Windows' stat data for a symlink (size 0, for one) isn't what Git for
+    // Windows records: compare the target itself.
+    if (builtin.os.tag == .windows and stat.kind == .sym_link) {
+        return if ((try hashLink(io, dir, e.path)).eql(e.oid)) .clean else .modified;
+    }
     if (!is_link and rules.file_mode) {
         const exec = executable(stat);
         if (exec != (e.mode == 0o100755)) return .modified;
