@@ -304,14 +304,14 @@ const State = struct {
         }
         const refs = std.fmt.allocPrint(arena, "{s}/refs", .{r.common_dir}) catch return false;
         collectTree(s.io, arena, refs, &git_side) catch return false;
-        // Global config and excludes: their directories (inotify, filtered
-        // by name), or the files themselves (kqueue).
+        // Global config and excludes: their directories (inotify filters
+        // events by name; kqueue reports none, so any change of entries
+        // there rebuilds the watch set) and, for kqueue, the files.
         const external = git.status.externalFiles(s.io, arena, repo, global) catch &.{};
         for (external) |path| {
-            if (files) {
-                add(&git_side, arena, path, .rules, false) catch return false;
-                continue;
-            }
+            // kqueue: the file itself (if it exists) for writes, and below
+            // the nearest directory for its creation, removal or renaming.
+            if (files) add(&git_side, arena, path, .rules, false) catch return false;
             // The nearest directory that exists, for the name that would
             // lead to the file (`~/.config` for a missing ~/.config/git/ignore).
             var name = std.fs.path.basename(path);

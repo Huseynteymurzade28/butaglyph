@@ -7,6 +7,7 @@
 //! unmap the packs.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const flate = std.compress.flate;
@@ -318,6 +319,9 @@ fn mapFile(io: Io, dir: Io.Dir, name: []const u8, arena: Allocator) !MappedFile 
     defer file.close(io);
     const len = try file.length(io);
     if (len == 0) return .{ .bytes = &.{}, .map = null };
+    // On Windows the standard library's mapping of these files fails and
+    // falls back to reading them, logging a warning on stderr: read them here.
+    if (builtin.os.tag == .windows) return readWhole(io, file, len, arena);
     if (Io.File.MemoryMap.create(io, file, .{
         .len = @intCast(len),
         .protection = .{ .read = true, .write = false },
@@ -325,10 +329,14 @@ fn mapFile(io: Io, dir: Io.Dir, name: []const u8, arena: Allocator) !MappedFile 
     })) |mm| {
         return .{ .bytes = mm.memory[0..@intCast(len)], .map = mm };
     } else |_| {
-        const buf = try arena.alloc(u8, @intCast(len));
-        if (try file.readPositionalAll(io, buf, 0) != len) return error.CorruptObject;
-        return .{ .bytes = buf, .map = null };
+        return readWhole(io, file, len, arena);
     }
+}
+
+fn readWhole(io: Io, file: Io.File, len: u64, arena: Allocator) !MappedFile {
+    const buf = try arena.alloc(u8, @intCast(len));
+    if (try file.readPositionalAll(io, buf, 0) != len) return error.CorruptObject;
+    return .{ .bytes = buf, .map = null };
 }
 
 test "pack entry header and offset encoding" {

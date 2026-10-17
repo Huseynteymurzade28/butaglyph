@@ -141,7 +141,8 @@ const StatRules = struct {
     /// core.fileMode: the executable bit is meaningful.
     file_mode: bool,
     /// core.symlinks: symlinks are checked out as symlinks (else as files
-    /// holding the target).
+    /// holding the target). Git's default is true, even on Windows, where
+    /// the installer and `git init` set it to false when needed.
     symlinks: bool,
     /// core.trustctime
     trust_ctime: bool,
@@ -154,7 +155,7 @@ const StatRules = struct {
         return .{
             // Windows has no executable bit, whatever the repository says.
             .file_mode = !windows and configs.getBool("core", "filemode", true),
-            .symlinks = configs.getBool("core", "symlinks", !windows),
+            .symlinks = configs.getBool("core", "symlinks", true),
             .trust_ctime = configs.getBool("core", "trustctime", true),
             .minimal = if (configs.get("core", null, "checkstat", &buf)) |v| std.ascii.eqlIgnoreCase(v, "minimal") else false,
         };
@@ -506,7 +507,7 @@ fn worktreeState(io: Io, dir: Io.Dir, e: *const index_mod.Entry, index_mtime_ns:
     const racy = entry_mtime_ns >= index_mtime_ns;
     if (stat_matches and !racy) return .clean;
 
-    const oid = if (is_link and !link_as_file) try hashLink(io, dir, e.path) else try hashFile(io, dir, e.path, stat.size);
+    const oid = if (stat.kind == .sym_link) try hashLink(io, dir, e.path) else try hashFile(io, dir, e.path, stat.size);
     return if (oid.eql(e.oid)) .clean else .modified;
 }
 

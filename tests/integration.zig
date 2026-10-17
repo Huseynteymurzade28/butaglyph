@@ -191,6 +191,8 @@ test "escape sequences are always wrapped" {
 }
 
 test "hostile directory names are displayed literally, never executed" {
+    // Windows file names can't hold `\`, and bash there is a POSIX layer.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     const root = try makeFixture(&tmp);
@@ -201,7 +203,8 @@ test "hostile directory names are displayed literally, never executed" {
     defer gpa.free(dir);
 
     const scripts = [_]struct { []const u8, []const u8 }{
-        .{ "bash", "PS1=\"$(\"$BUTA\" prompt --shell bash)\"; printf '%s' \"${PS1@P}\"" },
+        // ${PS1@P} needs bash 4.4 (macOS ships 3.2).
+        .{ "bash", "((BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] < 404)) && { printf SKIP; exit; }; PS1=\"$(\"$BUTA\" prompt --shell bash)\"; printf '%s' \"${PS1@P}\"" },
         .{ "zsh", "__buta_prompt=\"$(\"$BUTA\" prompt --shell zsh)\"; setopt prompt_subst; PROMPT='${__buta_prompt}'; print -rnP -- \"$PROMPT\"" },
         .{ "fish", "\"$BUTA\" prompt --shell fish" },
     };
@@ -209,6 +212,7 @@ test "hostile directory names are displayed literally, never executed" {
         if (!haveShell(s[0])) continue;
         const r = try run(&.{ s[0], "-c", s[1] }, dir, &.{.{ "BUTA_CONFIG", "/nonexistent" }});
         defer r.deinit();
+        if (std.mem.eql(u8, r.stdout, "SKIP")) continue;
         var buf: [1024]u8 = undefined;
         const shown = visible(r.stdout, &buf);
         if (std.mem.indexOf(u8, shown, name) == null) {
@@ -321,6 +325,9 @@ test "a module that misses its deadline is left out without delaying the prompt"
     defer gpa.free(root);
 
     // A FIFO with no writer: open() blocks forever, like a hung network mount.
+    // Windows has no such FIFOs (Git Bash's mkfifo makes one only its own
+    // programs understand).
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
     try tmp.dir.createDirPath(io, "slow/.git");
     const fifo = try std.fs.path.join(gpa, &.{ root, "slow/.git/HEAD" });
     defer gpa.free(fifo);

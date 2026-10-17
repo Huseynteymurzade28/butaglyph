@@ -145,6 +145,7 @@ const Verified = struct { objects: usize, ofs_deltas: u32, ref_deltas: u32 };
 fn verifyAllObjects(f: *Fixture, label: []const u8) !Verified {
     const repo = (try git.repo.discover(io, f.arena(), try f.path("r"))).?;
     var db = try git.odb.Odb.open(io, f.arena(), try std.fmt.allocPrint(f.arena(), "{s}/objects", .{repo.common_dir}));
+    defer db.close();
     const list = try f.run("r", &.{ "rev-list", "--objects", "--all" });
     var n: usize = 0;
     var lines = std.mem.splitScalar(u8, list, '\n');

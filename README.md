@@ -418,5 +418,6 @@ Known gaps:
 * not supported: SHA-256 repositories, reftable, split or sparse indexes,
   and object alternates. In any of these cases the module renders as empty;
 * no daemon on Windows yet; prompts there are computed directly;
-* on macOS, the daemon notices a global excludes file or git config file
-  only if it existed when the repository's watches were set up.
+* on macOS, kqueue reports no file names, so any file created or removed
+  directly in your home directory (where `~/.gitconfig` lives) makes the
+  daemon rebuild its watches once.
