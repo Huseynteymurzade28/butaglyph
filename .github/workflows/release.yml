@@ -22,10 +22,11 @@ jobs:
           for t in x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows; do
             zig build -Doptimize=ReleaseFast -Dtarget=$t -p "out/$t"
             name="buta-$GITHUB_REF_NAME-$t"
+            cp LICENSE README.md "out/$t/bin/"
             if [[ $t == *windows ]]; then
-              (cd "out/$t/bin" && zip -q "../../../dist/$name.zip" buta.exe)
+              (cd "out/$t/bin" && zip -q "../../../dist/$name.zip" buta.exe LICENSE README.md)
             else
-              tar -C "out/$t/bin" -czf "dist/$name.tar.gz" buta
+              tar -C "out/$t/bin" -czf "dist/$name.tar.gz" buta LICENSE README.md
             fi
           done
           (cd dist && sha256sum * > SHA256SUMS)
