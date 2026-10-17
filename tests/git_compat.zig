@@ -132,6 +132,9 @@ fn haveGit() bool {
 /// A repo with enough similar content for git to build long delta chains.
 fn buildHistory(f: *Fixture) !void {
     _ = try f.run("", &.{ "init", "-q", "-b", "main", "r" });
+    // No automatic gc or maintenance: the tests decide when to pack.
+    _ = try f.run("r", &.{ "config", "gc.auto", "0" });
+    _ = try f.run("r", &.{ "config", "maintenance.auto", "false" });
     var content: std.ArrayList(u8) = .empty;
     for (0..40) |i| {
         try content.print(f.arena(), "line {d}: the quick brown fox jumps over the lazy dog\n", .{i});
