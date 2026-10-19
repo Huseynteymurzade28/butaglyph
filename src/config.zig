@@ -39,6 +39,11 @@ pub const Config = struct {
     jobs: m.jobs.Config = .{},
     line_break: m.line_break.Config = .{},
     text: m.text.Config = .{},
+    python: m.python.Config = .{},
+    node: m.node.Config = .{},
+    rust: m.rust.Config = .{},
+    go: m.go.Config = .{},
+    zig: m.zig.Config = .{},
 };
 
 pub const DaemonMode = enum { auto, manual, off };
@@ -57,7 +62,7 @@ pub const Segments = struct {
     padding: []const u8 = " ",
 };
 
-pub const default_order = [_]module.Id{ .dir, .git_branch, .git_status, .duration, .status, .jobs, .line_break, .character };
+pub const default_order = [_]module.Id{ .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .duration, .status, .jobs, .line_break, .character };
 
 /// Largest config file we accept; larger files are reported and ignored.
 const max_file_size = 64 * 1024;
@@ -95,6 +100,8 @@ pub fn parse(arena: Allocator, raw: [:0]const u8, file_path: []const u8) LoadRes
         .problem = std.fmt.allocPrint(arena, "{s}: not valid UTF-16", .{file_path}) catch "config: bad encoding",
     };
     var diag: std.zon.parse.Diagnostics = .{};
+    // The ZON parser unrolls a loop per Config field at compile time.
+    @setEvalBranchQuota(4000);
     const cfg = std.zon.parse.fromSliceAlloc(Config, arena, source, &diag, .{ .free_on_error = false }) catch |err| {
         const msg = switch (err) {
             error.OutOfMemory => "out of memory",

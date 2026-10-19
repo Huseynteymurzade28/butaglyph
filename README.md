@@ -11,6 +11,9 @@ segments and ornaments. The command is `buta`.
   fast, and starts by itself.
 * **Never in the way.** Anything slow or broken is left out of that one
   prompt; the rest is always drawn.
+* **Knows your project.** Python (and its virtual environment), Node.js,
+  Rust, Go and Zig versions, shown only where they matter, read from
+  files or asked once and cached.
 * **Exact git status.** Staged, modified, deleted, conflicted and
   untracked files, ahead and behind, checked against the real `git status`.
 

@@ -19,6 +19,11 @@ pub const Glyphs = struct {
     jobs: []const u8,
     character_success: []const u8,
     character_failure: []const u8,
+    python: []const u8,
+    node: []const u8,
+    rust: []const u8,
+    go: []const u8,
+    zig: []const u8,
 };
 
 /// Requires a Nerd Font (https://www.nerdfonts.com).
@@ -37,6 +42,11 @@ pub const nerd: Glyphs = .{
     .jobs = "\u{f013} ", // nf-fa-gear
     .character_success = "\u{276f}", // ❯ (plain Unicode, present in most fonts)
     .character_failure = "\u{276f}",
+    .python = "\u{e73c} ", // nf-dev-python
+    .node = "\u{e718} ", // nf-dev-nodejs_small
+    .rust = "\u{e7a8} ", // nf-dev-rust
+    .go = "\u{e627} ", // nf-seti-go
+    .zig = "\u{e6a9} ", // nf-seti-zig
 };
 
 /// Pure 7-bit ASCII for terminals or fonts without extra glyphs.
@@ -55,6 +65,11 @@ pub const ascii: Glyphs = .{
     .jobs = "&",
     .character_success = ">",
     .character_failure = ">",
+    .python = "py ",
+    .node = "node ",
+    .rust = "rs ",
+    .go = "go ",
+    .zig = "zig ",
 };
 
 pub fn get(set: Set) *const Glyphs {

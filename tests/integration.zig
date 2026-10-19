@@ -414,3 +414,63 @@ test "output written to a shared file lands after what is already there" {
     try testing.expect(std.mem.startsWith(u8, rc, "# my settings\nbuta "));
     try testing.expectEqual(@as(usize, 2), std.mem.count(u8, rc, "buta "));
 }
+
+test "a tool's version is asked once and then read from the cache" {
+    if (builtin.os.tag == .windows or !haveShell("sh")) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try makeFixture(&tmp);
+    defer gpa.free(root);
+    try tmp.dir.createDirPath(io, "proj");
+    try tmp.dir.createDirPath(io, "bin");
+    try tmp.dir.writeFile(io, .{ .sub_path = "proj/package.json", .data = "{}" });
+    // A stand-in `node` that counts how often it runs.
+    const script = "#!/bin/sh\necho run >> \"$COUNT\"\necho v1.2.3\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "bin/node", .data = script, .flags = .{ .permissions = .executable_file } });
+    try tmp.dir.writeFile(io, .{ .sub_path = "cfg.zon", .data = ".{ .glyphs = .ascii, .order = .{ .node }, .daemon = .off, .timeout_ms = 2000 }" });
+    const proj = try std.fs.path.join(gpa, &.{ root, "proj" });
+    defer gpa.free(proj);
+    const path = try std.fmt.allocPrint(gpa, "{s}/bin:{s}", .{ root, testPath() });
+    defer gpa.free(path);
+    const count = try std.fs.path.join(gpa, &.{ root, "count" });
+    defer gpa.free(count);
+    const cfg = try std.fs.path.join(gpa, &.{ root, "cfg.zon" });
+    defer gpa.free(cfg);
+    const env: Env = &.{ .{ "PATH", path }, .{ "XDG_CACHE_HOME", root }, .{ "COUNT", count }, .{ "BUTA_CONFIG", cfg } };
+
+    for (0..3) |_| {
+        const r = try run(&.{ try butaPath(), "prompt" }, proj, env);
+        defer r.deinit();
+        var buf: [256]u8 = undefined;
+        try testing.expectEqualStrings("node v1.2.3", visible(r.stdout, &buf));
+    }
+    var count_buf: [64]u8 = undefined;
+    try testing.expectEqualStrings("run\n", try tmp.dir.readFile(io, "count", &count_buf));
+
+    // A new binary at the same path is asked again.
+    try tmp.dir.writeFile(io, .{ .sub_path = "bin/node", .data = "#!/bin/sh\necho run >> \"$COUNT\"\necho v22.0.0\n", .flags = .{ .permissions = .executable_file } });
+    const r = try run(&.{ try butaPath(), "prompt" }, proj, env);
+    defer r.deinit();
+    var buf: [256]u8 = undefined;
+    try testing.expectEqualStrings("node v22.0.0", visible(r.stdout, &buf));
+    try testing.expectEqualStrings("run\nrun\n", try tmp.dir.readFile(io, "count", &count_buf));
+}
+
+test "an active virtual environment shows its version and name" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try makeFixture(&tmp);
+    defer gpa.free(root);
+    try tmp.dir.createDirPath(io, "venv");
+    try tmp.dir.writeFile(io, .{ .sub_path = "venv/pyvenv.cfg", .data = "home = /usr/bin\nversion_info = 3.11.4.final.0\nprompt = demo\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "cfg.zon", .data = ".{ .glyphs = .ascii, .order = .{ .python }, .daemon = .off, .timeout_ms = 2000 }" });
+    const venv = try std.fs.path.join(gpa, &.{ root, "venv" });
+    defer gpa.free(venv);
+    const cfg = try std.fs.path.join(gpa, &.{ root, "cfg.zon" });
+    defer gpa.free(cfg);
+    // No project files here: the environment alone shows the module.
+    const r = try run(&.{ try butaPath(), "prompt" }, root, &.{ .{ "VIRTUAL_ENV", venv }, .{ "BUTA_CONFIG", cfg } });
+    defer r.deinit();
+    var buf: [256]u8 = undefined;
+    try testing.expectEqualStrings("py v3.11.4 (demo)", visible(r.stdout, &buf));
+}

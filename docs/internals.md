@@ -90,7 +90,10 @@ that happens and the daemon's own executable has been replaced on disk
   mount, for example), so buta prints the prompt and exits, which ends the
   task. `cheap` modules do no I/O and run inline on the main thread,
   because dispatching them would cost more than computing them. If no
-  expensive module is configured, no thread is started.
+  expensive module is configured, no thread is started. The language
+  modules are `batch`ed: they share one worker thread, one after
+  another, because outside their projects each of them is done after a
+  few `stat` calls, much less than the cost of a thread.
 * **Computing and rendering are separate.** Each module's `compute`
   produces plain `Data` with no pointers into the process state. Its
   `render` is a pure function from `Data` to styled spans. Only
@@ -163,6 +166,8 @@ src/
     untracked.zig    the work tree walk for untracked files
     status.zig       staged/modified/deleted/conflicted/untracked, ahead/behind
   modules/*.zig      one file per module
+    lang.zig         what the language modules share: project detection,
+                     $PATH lookup, the version cache
   shell/             init scripts (embedded with @embedFile)
 examples/            presets (embedded in the binary by presets.zig)
 docs/tools/          scripts that regenerate the screenshots and the GIF
@@ -234,6 +239,13 @@ the daemon.
   self-joining segments with any edge shape, the `text` module for
   ornaments, path separators, more style flags, ten presets embedded in
   the binary, and `buta preview` / `buta preset` to try and install them.
+* **Phase 6 (done): languages.** `python` (with virtual and conda
+  environments), `node`, `rust` (rustup toolchains resolved without the
+  proxy), `go` and `zig`. They are detected from project files in the
+  working directory and its parents. Versions are read from files where
+  the toolchain leaves one, and otherwise asked once and cached on disk.
+  The modules share one worker thread, so with all five in the default
+  order a prompt costs no more than before.
 
 Known gaps:
 

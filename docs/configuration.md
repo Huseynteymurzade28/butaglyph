@@ -20,9 +20,9 @@ config never costs you the prompt.
     // .nerd (default, needs a Nerd Font) or .ascii
     .glyphs = .nerd,
     // Modules in display order; modules left out are never computed.
-    .order = .{ .dir, .git_branch, .git_status, .duration, .status, .jobs, .line_break, .character },
+    .order = .{ .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .duration, .status, .jobs, .line_break, .character },
     .separator = " ",
-    // Deadline for expensive modules (git), in ms from prompt start.
+    // Deadline for expensive modules (git, languages), in ms from prompt start.
     .timeout_ms = 100,
     // The cache daemon: .auto (use it, start it when needed), .manual, .off
     .daemon = .auto,
@@ -125,6 +125,11 @@ any string works (`" \u{e0b1} "` for a powerline chevron, `" • "`,
 | `character`  | The prompt symbol: green on success, red on failure           | `success_symbol`, `failure_symbol`, `*_style`, `suffix` |
 | `line_break` | A newline, for multi-line prompts                             | none |
 | `text`       | Fixed pieces of styled text: ornaments, frames, labels        | `pieces` |
+| `python`     | Python version, and the active virtual or conda environment's name. Shown in a Python project or wherever an environment is active | `symbol`, `version_prefix`, `detect`, `show_env`, `timeout_ms` |
+| `node`       | Node.js version, in a JavaScript project                      | `symbol`, `version_prefix`, `detect`, `timeout_ms` |
+| `rust`       | The active rustup toolchain's `rustc` version, in a Cargo project | `symbol`, `version_prefix`, `detect`, `timeout_ms` |
+| `go`         | Go version, in a Go module or workspace                       | `symbol`, `version_prefix`, `detect`, `timeout_ms` |
+| `zig`        | Zig version, in a Zig project                                 | `symbol`, `version_prefix`, `detect`, `timeout_ms` |
 
 Every module except `line_break` and `text` has a `style` (or
 `success_style`/`failure_style`) and a `symbol` override; leaving `symbol`
@@ -135,6 +140,51 @@ directory counts once (`dir/`), and the repository's
 `status.showUntrackedFiles` (`no`, `normal`, `all`) applies. Set
 `.git_status = .{ .untracked = false }` to skip the walk of the work tree
 altogether.
+
+### Language modules
+
+`python`, `node`, `rust`, `go` and `zig` show up only inside a project of
+their language: a directory that holds one of the `detect` files, or
+below one (up to your home directory). Each module shows its tool's
+version, and the module alone (no version) when the tool isn't
+installed.
+
+```zig
+.rust = .{
+    .style = .{ .fg = "#dea584" },
+    .version_prefix = "",  // "1.82.0" instead of "v1.82.0"
+    .detect = .{ .files = .{ "Cargo.toml" }, .search_parents = false },
+},
+```
+
+| Module   | Default `detect` files |
+|----------|------------------------|
+| `python` | `pyproject.toml`, `requirements.txt`, `setup.py`, `setup.cfg`, `Pipfile`, `.python-version`, `tox.ini`, `uv.lock` |
+| `node`   | `package.json`, `.nvmrc`, `.node-version` |
+| `rust`   | `Cargo.toml`, `rust-toolchain.toml`, `rust-toolchain` |
+| `go`     | `go.mod`, `go.work` |
+| `zig`    | `build.zig`, `build.zig.zon` |
+
+Where it can, buta reads the version from a file instead of running the
+tool. A virtual environment's version comes from its `pyvenv.cfg`, and
+Go's comes from the `VERSION` file of the installation. For Rust, buta
+picks the toolchain the way rustup does: `$RUSTUP_TOOLCHAIN`, then
+`rustup override` and `rust-toolchain` files from the working directory
+up, then the default. It then asks that toolchain's own `rustc`, so the
+rustup proxy never runs and a prompt never installs a toolchain.
+
+Anything else runs once (`node --version`, `zig version`). The answer is
+kept in `~/.cache/butaglyph/versions` (`$XDG_CACHE_HOME`, or
+`%LOCALAPPDATA%` on Windows), keyed by the binary's path, size, mtime
+and inode. When you upgrade the tool, the binary changes and buta asks
+again. Shims of version managers (pyenv, rbenv, asdf, mise, volta) give a
+different answer in each directory without changing on disk, so they are
+asked on every prompt.
+
+The first prompt in a new project waits for that one run, up to the
+module's deadline. A tool that takes longer than the deadline is left out
+of that prompt and asked again on the next one, so raise `timeout_ms` for
+that module if this keeps happening.
 
 Set `BUTA_DEBUG=1` to have modules report their errors and missed
 deadlines on stderr.

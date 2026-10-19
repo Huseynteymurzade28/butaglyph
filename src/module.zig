@@ -16,7 +16,11 @@
 //!
 //!   pub const scope: Scope = .repo;
 //!
-//! to have the daemon compute and cache them (see `Scope`).
+//! to have the daemon compute and cache them (see `Scope`), or
+//!
+//!   pub const batch = true;
+//!
+//! to share one worker thread with the other batched modules (see `batched`).
 //!
 //! Computing and rendering are deliberately split. `Data` holds no pointers
 //! into the Context, so it can be produced elsewhere: on a worker thread with
@@ -42,6 +46,11 @@ pub const Id = enum {
     jobs,
     line_break,
     text,
+    python,
+    node,
+    rust,
+    go,
+    zig,
 };
 
 /// How expensive `compute` is.
@@ -68,6 +77,15 @@ pub fn scopeOf(comptime M: type) Scope {
     return if (@hasDecl(M, "scope")) M.scope else .local;
 }
 
+/// Batched modules are computed one after another on a single worker
+/// thread, in `Id` order. They are the ones that usually find nothing to
+/// show after a few `stat` calls (the language modules, outside their
+/// projects), where a thread each would cost more than the work. Each
+/// still has its own deadline.
+pub fn batched(comptime M: type) bool {
+    return M.cost == .expensive and @hasDecl(M, "batch") and M.batch;
+}
+
 pub const impls = struct {
     pub const dir = @import("modules/dir.zig");
     pub const git_branch = @import("modules/git_branch.zig");
@@ -78,6 +96,11 @@ pub const impls = struct {
     pub const jobs = @import("modules/jobs.zig");
     pub const line_break = @import("modules/line_break.zig");
     pub const text = @import("modules/text.zig");
+    pub const python = @import("modules/python.zig");
+    pub const node = @import("modules/node.zig");
+    pub const rust = @import("modules/rust.zig");
+    pub const go = @import("modules/go.zig");
+    pub const zig = @import("modules/zig.zig");
 };
 
 pub fn Impl(comptime id: Id) type {
@@ -94,6 +117,11 @@ pub const Data = union(Id) {
     jobs: impls.jobs.Data,
     line_break: impls.line_break.Data,
     text: impls.text.Data,
+    python: impls.python.Data,
+    node: impls.node.Data,
+    rust: impls.rust.Data,
+    go: impls.go.Data,
+    zig: impls.zig.Data,
 };
 
 pub const id_count = @typeInfo(Id).@"enum".fields.len;
@@ -116,6 +144,8 @@ comptime {
             @compileError("expensive module '" ++ f.name ++ "' needs `timeout_ms: ?u32 = null` in its Config");
         if (scopeOf(M) != .local and M.cost != .expensive)
             @compileError("module '" ++ f.name ++ "': only expensive modules can have a scope");
+        if (@hasDecl(M, "batch") and (M.cost != .expensive or scopeOf(M) != .local))
+            @compileError("module '" ++ f.name ++ "': only local expensive modules can be batched");
     }
 }
 
@@ -169,10 +199,11 @@ pub fn computeAll(ctx: *const Context, cfg: *const Config, rt: *Runtime, slots: 
     // Launch the other expensive modules so they overlap with everything else.
     inline for (@typeInfo(Id).@"enum".fields) |f| {
         const id: Id = @enumFromInt(f.value);
-        if (Impl(id).cost == .expensive and inOrder(cfg, id) and !conn.pending[f.value]) {
+        if (Impl(id).cost == .expensive and !batched(Impl(id)) and inOrder(cfg, id) and !conn.pending[f.value]) {
             launch(id, ctx, cfg, rt, slots, &launched);
         }
     }
+    launchBatch(ctx, cfg, rt, slots, &launched);
 
     inline for (@typeInfo(Id).@"enum".fields) |f| {
         const id: Id = @enumFromInt(f.value);
@@ -217,6 +248,37 @@ fn launch(comptime id: Id, ctx: *const Context, cfg: *const Config, rt: *Runtime
         slots[@intFromEnum(id)] = job.result;
     }
 }
+
+/// Starts the batched modules in `cfg.order` on one worker thread.
+fn launchBatch(ctx: *const Context, cfg: *const Config, rt: *Runtime, slots: *Slots, launched: *[id_count]bool) void {
+    var any = false;
+    inline for (@typeInfo(Id).@"enum".fields) |f| {
+        if (batched(Impl(@enumFromInt(f.value))) and inOrder(cfg, @enumFromInt(f.value))) any = true;
+    }
+    if (!any) return;
+    const args = .{ rt, ctx, cfg };
+    if (ctx.io.concurrent(BatchTask.run, args)) |_| {
+        inline for (@typeInfo(Id).@"enum".fields) |f| {
+            if (batched(Impl(@enumFromInt(f.value))) and inOrder(cfg, @enumFromInt(f.value))) launched[f.value] = true;
+        }
+    } else |_| {
+        @call(.auto, BatchTask.run, args);
+        inline for (@typeInfo(Id).@"enum".fields) |f| {
+            if (batched(Impl(@enumFromInt(f.value)))) slots[f.value] = rt.jobs[f.value].result;
+        }
+    }
+}
+
+const BatchTask = struct {
+    fn run(rt: *Runtime, ctx: *const Context, cfg: *const Config) void {
+        inline for (@typeInfo(Id).@"enum".fields) |f| {
+            const id: Id = @enumFromInt(f.value);
+            if (comptime batched(Impl(id))) {
+                if (inOrder(cfg, id)) Task(id).run(&rt.jobs[f.value], ctx, cfg);
+            }
+        }
+    }
+};
 
 pub fn timeoutFor(comptime id: Id, cfg: *const Config) u32 {
     return configFor(id, cfg).timeout_ms orelse cfg.timeout_ms;
