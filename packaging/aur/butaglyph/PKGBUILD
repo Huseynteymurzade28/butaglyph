@@ -8,7 +8,7 @@ url='https://github.com/Huseynteymurzade28/butaglyph'
 license=('MIT')
 options=('!debug')
 makedepends=('zig>=0.16.0' 'zig<0.17.0')
-optdepends=('ttf-nerd-fonts-symbols: icons for the default look and most presets')
+optdepends=('ttf-nerd-fonts-symbols: icons with .glyphs = .nerd')
 provides=('butaglyph')
 conflicts=('butaglyph-bin')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")

@@ -1,12 +1,12 @@
 // neon: synthwave segments that fade in through ░▒▓.
 // A hot pink to violet path, and a prompt arrow that glows from pink to
-// cyan. Needs a Nerd Font and a truecolor terminal.
+// cyan. Needs a truecolor terminal.
 .{
     .order = .{ .dir, .git_branch, .git_status, .duration, .status, .jobs, .line_break, .character },
-    .segments = .{ .open = "░▒▓", .join = "\u{e0b0}", .close = "\u{e0b0}", .padding = " " },
+    .segments = .{ .open = "░▒▓", .join = "▓▒░", .close = "▓▒░", .padding = " " },
     .dir = .{
         .style = .{ .fg = "#fff4fb", .bg = "#ff2a6d>#b300c5", .bold = true },
-        .separator = " \u{e0b1} ",
+        .separator = " › ",
     },
     .git_branch = .{ .style = .{ .fg = "#05d9e8", .bg = "#2b0f54", .bold = true } },
     .git_status = .{ .style = .{ .fg = "#ff6ec7", .bg = "#2b0f54", .bold = true } },

@@ -1,9 +1,9 @@
 // acid: rainbows, flames and blinking. Too much, on purpose.
-// Rainbow segments with flame edges, a branch name in every color at once,
-// a status that blinks. Needs a Nerd Font and a truecolor terminal.
+// Rainbow segments with equalizer edges, a branch name in every color at once,
+// a status that blinks. Needs a truecolor terminal.
 .{
     .order = .{ .text, .dir, .git_branch, .git_status, .duration, .status, .jobs, .line_break, .character },
-    .segments = .{ .open = "\u{e0c2} ", .join = "\u{e0c0} ", .close = "\u{e0c0}", .padding = " " },
+    .segments = .{ .open = "▁▃▅▇", .join = "▇▅▃▁", .close = "▇▅▃▁", .padding = " " },
     .text = .{ .pieces = .{.{ .text = "✺", .style = .{ .fg = "rainbow", .bold = true } }} },
     .dir = .{
         .style = .{ .fg = "#000000", .bg = "rainbow", .bold = true },

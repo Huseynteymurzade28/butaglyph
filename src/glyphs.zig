@@ -2,7 +2,7 @@
 //! a module's `symbol` option in config.zon overrides it.
 //! Glyphs carry their own trailing spacing so the ASCII set can be tighter.
 
-pub const Set = enum { nerd, ascii };
+pub const Set = enum { unicode, nerd, ascii };
 
 pub const Glyphs = struct {
     git_branch: []const u8,
@@ -26,7 +26,33 @@ pub const Glyphs = struct {
     zig: []const u8,
 };
 
-/// Requires a Nerd Font (https://www.nerdfonts.com).
+/// The default: standard Unicode only, no Private Use Area. A terminal
+/// whose font lacks a symbol draws it from a fallback font, so this works
+/// with any font.
+pub const unicode: Glyphs = .{
+    .git_branch = "\u{2387} ", // ⎇
+    .git_detached = "\u{27a6} ", // ➦
+    .git_staged = "+",
+    .git_modified = "!",
+    .git_deleted = "\u{2718}", // ✘
+    .git_conflicted = "=",
+    .git_untracked = "?",
+    .git_ahead = "\u{21e1}", // ⇡
+    .git_behind = "\u{21e3}", // ⇣
+    .status = "\u{2718} ", // ✘
+    .duration = "\u{25f7} ", // ◷
+    .jobs = "\u{2726} ", // ✦
+    .character_success = "\u{276f}", // ❯
+    .character_failure = "\u{276f}",
+    .python = "py ",
+    .node = "\u{2b22} ", // ⬢
+    .rust = "rs ",
+    .go = "go ",
+    .zig = "zig ",
+};
+
+/// Icons from the Private Use Area: needs a Nerd Font
+/// (https://www.nerdfonts.com). Opt in with `.glyphs = .nerd`.
 pub const nerd: Glyphs = .{
     .git_branch = "\u{e0a0} ", // nf-pl-branch
     .git_detached = "\u{f417} ", // nf-oct-git_commit
@@ -74,6 +100,7 @@ pub const ascii: Glyphs = .{
 
 pub fn get(set: Set) *const Glyphs {
     return switch (set) {
+        .unicode => &unicode,
         .nerd => &nerd,
         .ascii => &ascii,
     };
@@ -83,4 +110,22 @@ test "ascii set is 7-bit clean" {
     inline for (@typeInfo(Glyphs).@"struct".fields) |f| {
         for (@field(ascii, f.name)) |c| try @import("std").testing.expect(c < 0x80);
     }
+}
+
+/// U+E000-U+F8FF and the supplementary private use planes: code points no
+/// font has, except fonts patched for them (Nerd Fonts).
+pub fn hasPrivateUse(s: []const u8) bool {
+    const std = @import("std");
+    var it = (std.unicode.Utf8View.init(s) catch return false).iterator();
+    while (it.nextCodepoint()) |c| {
+        if ((c >= 0xe000 and c <= 0xf8ff) or c >= 0xf0000) return true;
+    }
+    return false;
+}
+
+test "unicode set needs no special font" {
+    inline for (@typeInfo(Glyphs).@"struct".fields) |f| {
+        try @import("std").testing.expect(!hasPrivateUse(@field(unicode, f.name)));
+    }
+    try @import("std").testing.expect(hasPrivateUse(nerd.git_branch));
 }

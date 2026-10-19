@@ -7,7 +7,7 @@ arch=('x86_64' 'aarch64')
 url='https://github.com/Huseynteymurzade28/butaglyph'
 license=('MIT')
 options=('!debug')
-optdepends=('ttf-nerd-fonts-symbols: icons for the default look and most presets')
+optdepends=('ttf-nerd-fonts-symbols: icons with .glyphs = .nerd')
 provides=('butaglyph')
 conflicts=('butaglyph')
 source_x86_64=("buta-v$pkgver-x86_64-linux.tar.gz::$url/releases/download/v$pkgver/buta-v$pkgver-x86_64-linux.tar.gz")

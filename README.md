@@ -29,8 +29,9 @@ weaves small glyphs into your prompt the same way.
 | Windows | See [Windows](#windows) below |
 | From source | `zig build -Doptimize=ReleaseFast` (Zig 0.16.0), then copy `zig-out/bin/buta` |
 
-You need a [Nerd Font](https://www.nerdfonts.com/font-downloads) in your
-terminal for the icons (or use the `minimal` or `ascii` preset).
+Any font works: every preset and the default look use only standard
+Unicode. If you have a [Nerd Font](https://www.nerdfonts.com) and want
+its icons, set `.glyphs = .nerd`.
 
 Then add one line to your shell:
 
@@ -55,11 +56,7 @@ Then add one line to your shell:
    [Environment]::SetEnvironmentVariable('Path', "$userPath;$bin", 'User')
    ```
 
-2. Install a Nerd Font (unzip, select the `.ttf` files, right-click,
-   *Install*) and choose it in Windows Terminal: *Settings → Profiles →
-   Defaults → Appearance → Font face*.
-
-3. Open a new terminal and run:
+2. Open a new terminal and run:
 
    ```powershell
    Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
@@ -98,7 +95,7 @@ Start from a preset (`buta preset carpet --install`), then edit
     .order = .{ .text, .dir, .git_branch, .git_status, .duration, .status, .line_break, .character },
 
     // Join modules that have a background into segments.
-    .segments = .{ .open = "\u{e0b6}", .join = "\u{e0b0}", .close = "\u{e0b0}" },
+    .segments = .{ .open = "▗▟", .join = "▙▖", .close = "▙▖" },
 
     // An ornament at the start.
     .text = .{ .pieces = .{.{ .text = "❧", .style = .{ .fg = "#e6a532" } }} },

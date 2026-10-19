@@ -1,14 +1,14 @@
 // carpet: butaglyph's own look, in the colors of an Azerbaijani carpet.
 // Madder red, indigo, saffron, teal and ivory woven into segments, with a
 // buta (the teardrop motif the project is named after) at each end.
-// Needs a Nerd Font and a truecolor terminal.
+// Stepped edges, like a carpet's border. Needs a truecolor terminal.
 .{
     .order = .{ .text, .dir, .git_branch, .git_status, .duration, .status, .jobs, .line_break, .character },
-    .segments = .{ .open = "\u{e0b6}", .join = "\u{e0bc}", .close = "\u{e0bc}", .padding = " " },
+    .segments = .{ .open = "▗▟", .join = "▙▖", .close = "▙▖", .padding = " " },
     .text = .{ .pieces = .{.{ .text = "❧", .style = .{ .fg = "#e6a532", .bold = true } }} },
     .dir = .{
         .style = .{ .fg = "#f8ecd4", .bg = "#7a1424>#b8323b", .bold = true },
-        .separator = " \u{e0b1} ",
+        .separator = " › ",
         .max_length = 36,
     },
     .git_branch = .{ .style = .{ .fg = "#f0b43c", .bg = "#24306e", .bold = true } },

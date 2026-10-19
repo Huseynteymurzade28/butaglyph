@@ -317,6 +317,25 @@ test trimTrailingSlashes {
     try std.testing.expectEqualStrings(if (env_mod.is_windows) "//" else "/", trimTrailingSlashes("//"));
 }
 
+/// A `\u{...}` escape of a Private Use Area code point.
+fn escapesPrivateUse(source: []const u8) bool {
+    var it = std.mem.splitSequence(u8, source, "\\u{");
+    _ = it.first();
+    while (it.next()) |rest| {
+        const end = std.mem.indexOfScalar(u8, rest, '}') orelse continue;
+        const c = std.fmt.parseInt(u21, rest[0..end], 16) catch continue;
+        var buf: [4]u8 = undefined;
+        const n = std.unicode.utf8Encode(c, &buf) catch continue;
+        if (glyphs.hasPrivateUse(buf[0..n])) return true;
+    }
+    return false;
+}
+
+test escapesPrivateUse {
+    try std.testing.expect(escapesPrivateUse("x = \"\\u{e0b0}\""));
+    try std.testing.expect(!escapesPrivateUse("x = \"\\u{e9}\\u{2590}\""));
+}
+
 test "every preset parses" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
@@ -327,6 +346,11 @@ test "every preset parses" {
             return error.PresetDoesNotParse;
         }
         try std.testing.expect(p.description().len > 10);
+        // Presets work with any font: no Nerd Font glyphs, written or escaped.
+        if (glyphs.hasPrivateUse(p.source) or escapesPrivateUse(p.source) or std.mem.indexOf(u8, p.source, ".nerd") != null) {
+            std.debug.print("preset {s} needs a Nerd Font\n", .{p.name});
+            return error.PresetNeedsNerdFont;
+        }
     }
 }
 

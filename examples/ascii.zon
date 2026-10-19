@@ -1,5 +1,5 @@
 // ascii: the default layout in plain 7-bit ASCII.
-// For terminals without a Nerd Font (or a UTF-8 locale).
+// For terminals without a UTF-8 locale.
 .{
     .glyphs = .ascii,
     .git_branch = .{ .symbol = "on " },

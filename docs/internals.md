@@ -152,7 +152,7 @@ src/
   context.zig        shared read-only input: cwd, env, status, duration, jobs
   module.zig         module interface, registry, compute/render drivers
   config.zig         ZON config loading
-  glyphs.zig         Nerd Font and ASCII glyph sets
+  glyphs.zig         glyph sets: Unicode (default), Nerd Font, ASCII
   render.zig         spans, colors, gradients (OKLab), ANSI, per-shell quoting
   git/               the git reader (its own module, imported as "git")
     repo.zig         discovery, worktrees (.git files, commondir), HEAD

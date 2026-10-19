@@ -4,8 +4,10 @@
 
     render.py capture.ans out.png [--title TITLE] [--cols N]
 
-Needs chromium (headless) and JetBrainsMono Nerd Font installed, so the
-glyphs render exactly as in a real terminal.
+    render.py capture.ans out.png --font "Noto Sans Mono"
+
+Needs chromium (headless) and JetBrains Mono (the Nerd Font build, whose
+files are found by name) installed, or any installed font with --font.
 """
 
 import argparse
@@ -141,7 +143,7 @@ def to_html(text):
     return lines
 
 
-def page(lines, title, cols):
+def page(lines, title, cols, family=None):
     char_w = FONT_SIZE * 0.6
     width = int(cols * char_w + 2 * PAD_X)
     height = int(len(lines) * FONT_SIZE * LINE_HEIGHT + 2 * PAD_Y + BAR)
@@ -154,6 +156,9 @@ def page(lines, title, cols):
             ("Italic", 400, "italic"), ("BoldItalic", 700, "italic"),
         ]
     )
+    stack = "T,monospace"
+    if family:
+        fonts, stack = "", '"%s",monospace' % family
     body = "".join('<div class="l">%s</div>' % l for l in lines)
     doc = """<!doctype html><meta charset="utf-8"><style>%s
 html,body{margin:0;background:%%s}
@@ -163,12 +168,12 @@ html,body{margin:0;background:%%s}
    font:600 13px system-ui,sans-serif;color:#7f849c}
 .d{width:12px;height:12px;border-radius:50%%}
 .t{flex:1;text-align:center;margin-right:52px}
-.s{padding:%dpx %dpx;font:%dpx/%s T,monospace;color:%s;white-space:pre}
+.s{padding:%dpx %dpx;font:%dpx/%s %s;color:%s;white-space:pre}
 .l{height:%.2fpx}
 </style><div class="w"><div class="b"><span class="d" style="background:#f38ba8"></span>
 <span class="d" style="background:#f9e2af"></span><span class="d" style="background:#a6e3a1"></span>
 <span class="t">%s</span></div><div class="s">%s</div></div>""" % (
-        fonts, margin, width, BG, BAR, PAD_Y, PAD_X, FONT_SIZE, LINE_HEIGHT, FG,
+        fonts, margin, width, BG, BAR, PAD_Y, PAD_X, FONT_SIZE, LINE_HEIGHT, stack, FG,
         FONT_SIZE * LINE_HEIGHT, html.escape(title), body,
     )
     return doc, width + 2 * margin, height + 2 * margin
@@ -211,12 +216,13 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--title", default="")
     ap.add_argument("--cols", type=int, default=0)
+    ap.add_argument("--font", default=None, help="an installed font family to use instead")
     args = ap.parse_args()
     text = open(args.capture, encoding="utf-8", errors="replace").read()
     text = re.sub(r"(\n[ \t]*)+$", "", text.rstrip("\n") + "\n")  # trailing blank lines
     lines = to_html(text)
     cols = args.cols or max(len(SGR.sub("", OTHER_ESC.sub("", l))) for l in text.split("\n"))
-    doc, w, h = page(lines, args.title, cols)
+    doc, w, h = page(lines, args.title, cols, args.font)
     with tempfile.TemporaryDirectory() as tmp:
         white = shoot(doc, "#ffffff", w, h, tmp, "white")
         black = shoot(doc, "#000000", w, h, tmp, "black")

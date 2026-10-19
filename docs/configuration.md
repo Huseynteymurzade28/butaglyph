@@ -17,8 +17,8 @@ config never costs you the prompt.
 
 ```zig
 .{
-    // .nerd (default, needs a Nerd Font) or .ascii
-    .glyphs = .nerd,
+    // .unicode (default, any font), .nerd (icons, needs a Nerd Font) or .ascii
+    .glyphs = .unicode,
     // Modules in display order; modules left out are never computed.
     .order = .{ .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .duration, .status, .jobs, .line_break, .character },
     .separator = " ",
@@ -75,15 +75,27 @@ segments.
 
 ```zig
 .segments = .{
-    .open = "\u{e0b6}",  // before a run of segments
-    .join = "\u{e0b0}",  // between two segments; null: separate pills
-    .close = "\u{e0b0}", // after a run
+    .open = "▐",  // before a run of segments (the default)
+    .join = "▌",  // between two segments; null: separate pills
+    .close = "▌", // after a run
     .padding = " ",      // inside each segment, on both sides
 },
 ```
 
-Some shapes from the Nerd Font set (and plain Unicode, which needs no
-special font):
+Shapes made of block elements work with every font (most terminals
+draw these characters themselves, filling the cell):
+
+| Shape     | open    | join    | close   | Used by  |
+|-----------|---------|---------|---------|----------|
+| half      | `▐`     | `▌`     | `▌`     | default  |
+| stairs    | `▗▟`    | `▙▖`    | `▙▖`    | carpet   |
+| shade     | `░▒▓`   | `▓▒░`   | `▓▒░`   | neon     |
+| dither    | `▗▞`    | `▞`     | `▚▖`    | pixel    |
+| equalizer | `▁▃▅▇`  | `▇▅▃▁`  | `▇▅▃▁`  | acid     |
+| pills     | `▐`     | `null`  | `▌`     | bubbles  |
+
+With a Nerd Font, the powerline shapes are available too. They are in
+the Private Use Area, so without such a font they show as boxes:
 
 | Shape     | open       | join       | close      |
 |-----------|------------|------------|------------|
@@ -92,8 +104,6 @@ special font):
 | slant     | `\u{e0ba}` | `\u{e0bc}` | `\u{e0bc}` |
 | flame     | `\u{e0c2}` | `\u{e0c0}` | `\u{e0c0}` |
 | pixel     | `\u{e0c7}` | `\u{e0c6}` | `\u{e0c6}` |
-| shade     | `░▒▓`      | `\u{e0b0}` | `▓▒░`      |
-| pills     | `\u{e0b6}` | `null`     | `\u{e0b4}` |
 
 **Ornaments.** The `text` module draws fixed pieces of styled text:
 motifs, frames, labels. List `.text` in `order` wherever it should go
@@ -109,8 +119,9 @@ motifs, frames, labels. List `.text` in `order` wherever it should go
 ```
 
 **Paths.** `.dir = .{ .separator = " ❯ " }` draws `~ ❯ dev ❯ butaglyph`;
-any string works (`" \u{e0b1} "` for a powerline chevron, `" • "`,
-`" ∕ "`). The root of an absolute path stays `/`.
+any string works (`" › "`, `" • "`, `" ∕ "`, or `" \u{e0b1} "`, a
+powerline chevron, with a Nerd Font). The root of an absolute path stays
+`/`.
 
 ## Modules
 

@@ -1,8 +1,8 @@
 // bubbles: pastel pills, one per module.
-// Needs a Nerd Font and a truecolor terminal.
+// Needs a truecolor terminal.
 .{
     .order = .{ .dir, .git_branch, .git_status, .duration, .status, .jobs, .character },
-    .segments = .{ .open = "\u{e0b6}", .join = null, .close = "\u{e0b4}", .padding = "" },
+    .segments = .{ .open = "▐", .join = null, .close = "▌", .padding = " " },
     .dir = .{ .style = .{ .fg = "#1e1e2e", .bg = "#89b4fa", .bold = true } },
     .git_branch = .{ .style = .{ .fg = "#1e1e2e", .bg = "#cba6f7", .bold = true } },
     .git_status = .{ .style = .{ .fg = "#1e1e2e", .bg = "#f9e2af", .bold = true } },

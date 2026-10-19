@@ -1,8 +1,8 @@
-// pixel: an 8-bit handheld, four greens and pixelated edges.
-// Needs a Nerd Font and a truecolor terminal.
+// pixel: an 8-bit handheld, four greens and dithered edges.
+// Needs a truecolor terminal.
 .{
     .order = .{ .text, .dir, .git_branch, .git_status, .duration, .status, .jobs, .character },
-    .segments = .{ .open = "\u{e0c7}", .join = "\u{e0c6}", .close = "\u{e0c6}", .padding = " " },
+    .segments = .{ .open = "▗▞", .join = "▞", .close = "▚▖", .padding = " " },
     .text = .{ .pieces = .{.{ .text = "▞▚", .style = .{ .fg = "#8bac0f" } }} },
     .dir = .{ .style = .{ .fg = "#9bbc0f", .bg = "#306230", .bold = true }, .max_length = 0 },
     .git_branch = .{ .style = .{ .fg = "#0f380f", .bg = "#8bac0f", .bold = true } },

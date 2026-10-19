@@ -11,8 +11,9 @@ const env = @import("env.zig");
 const m = module.impls;
 
 pub const Config = struct {
-    /// Glyph set: .nerd (needs a Nerd Font) or .ascii.
-    glyphs: glyphs.Set = .nerd,
+    /// Glyph set: .unicode (any font), .nerd (icons, needs a Nerd Font)
+    /// or .ascii.
+    glyphs: glyphs.Set = .unicode,
     /// Modules in display order. A module not listed here is never computed.
     order: []const module.Id = &default_order,
     /// Inserted between two non-empty modules on the same line.
@@ -48,16 +49,16 @@ pub const Config = struct {
 
 pub const DaemonMode = enum { auto, manual, off };
 
-/// Segment shapes. The defaults are Nerd Font powerline glyphs; see
-/// `shapes` in the README for others (round, slant, flame, pixel).
+/// Segment shapes. The defaults are half blocks, which every font has;
+/// see docs/configuration.md for others.
 pub const Segments = struct {
     /// Before a run of segments, in the first one's background color.
-    open: []const u8 = "\u{e0b6}",
+    open: []const u8 = "\u{2590}", // ▐
     /// Between two segments: the left one's background on the right one's.
     /// null draws every segment on its own (close, separator, open): pills.
-    join: ?[]const u8 = "\u{e0b0}",
+    join: ?[]const u8 = "\u{258c}", // ▌
     /// After a run of segments, in the last one's background color.
-    close: []const u8 = "\u{e0b0}",
+    close: []const u8 = "\u{258c}", // ▌
     /// Inside each segment, on both sides of its text.
     padding: []const u8 = " ",
 };
@@ -147,7 +148,7 @@ test "empty config gives defaults" {
     defer arena.deinit();
     const r = parse(arena.allocator(), ".{}", "t.zon");
     try std.testing.expectEqual(@as(?[]const u8, null), r.problem);
-    try std.testing.expectEqual(glyphs.Set.nerd, r.config.glyphs);
+    try std.testing.expectEqual(glyphs.Set.unicode, r.config.glyphs);
     try std.testing.expectEqualSlices(module.Id, &default_order, r.config.order);
     try std.testing.expectEqual(@as(u64, 2000), r.config.duration.min_ms);
     try std.testing.expectEqual(@as(u32, 100), r.config.timeout_ms);
@@ -208,7 +209,7 @@ test "invalid config falls back to defaults with a located message" {
     var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena.deinit();
     const r = parse(arena.allocator(), ".{\n  .glyphs = .emoji,\n}", "t.zon");
-    try std.testing.expectEqual(glyphs.Set.nerd, r.config.glyphs);
+    try std.testing.expectEqual(glyphs.Set.unicode, r.config.glyphs);
     try std.testing.expect(std.mem.startsWith(u8, r.problem.?, "t.zon:2:"));
 
     const typo = parse(arena.allocator(), ".{ .dirr = .{} }", "t.zon");
