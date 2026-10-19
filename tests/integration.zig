@@ -596,7 +596,10 @@ test "buta config serves the editor, previews and saves" {
     );
     defer gpa.free(preview);
     var vbuf: [256]u8 = undefined;
-    const parsed = try std.json.parseFromSlice(struct { runs: []const struct { prompt: []const u8 } }, gpa, preview, .{ .ignore_unknown_fields = true });
+    const parsed = std.json.parseFromSlice(struct { runs: []const struct { prompt: []const u8 } }, gpa, preview, .{ .ignore_unknown_fields = true }) catch |e| {
+        std.debug.print("preview answered: {s}\n", .{preview});
+        return e;
+    };
     defer parsed.deinit();
     try testing.expectEqualStrings("x 3 FAIL ", visible(parsed.value.runs[0].prompt, &vbuf));
 

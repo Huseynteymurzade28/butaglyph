@@ -320,7 +320,7 @@ fn respondPreview(state: *State, arena: Allocator, request: *http.Server.Request
 
     // A file of its own per preview: previews may run concurrently.
     const n = state.previews.fetchAdd(1, .monotonic);
-    const tmp = try std.fmt.allocPrint(arena, "{s}/buta-config-{s}-{d}.zon", .{ tempDir(state.env), state.token[0..8], n });
+    const tmp = try std.fmt.allocPrint(arena, "{s}/buta-config-{s}-{d}.zon", .{ tempDir(state), state.token[0..8], n });
     const cwd_dir = Io.Dir.cwd();
     try cwd_dir.writeFile(state.io, .{ .sub_path = tmp, .data = zon });
     defer cwd_dir.deleteFile(state.io, tmp) catch {};
@@ -367,11 +367,13 @@ fn respondPreview(state: *State, arena: Allocator, request: *http.Server.Request
     } });
 }
 
-fn tempDir(env: env_mod.Env) []const u8 {
+/// $TMPDIR (or %TEMP%), else the config file's directory, which must be
+/// writable anyway for saving.
+fn tempDir(state: *const State) []const u8 {
     for ([_][]const u8{ "TMPDIR", "TEMP", "TMP" }) |name| {
-        if (env.get(name)) |d| if (d.len > 0) return std.mem.trimEnd(u8, d, "/\\");
+        if (state.env.get(name)) |d| if (d.len > 0) return std.mem.trimEnd(u8, d, "/\\");
     }
-    return "/tmp";
+    return std.fs.path.dirname(state.path) orelse ".";
 }
 
 fn respondSave(state: *State, arena: Allocator, request: *http.Server.Request, body: []const u8) !void {
