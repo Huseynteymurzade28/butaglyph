@@ -3,7 +3,7 @@
 // link nobody should click, and a failed command flashes ERR.
 // Needs a truecolor terminal.
 .{
-    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character },
+    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .java, .ruby, .php, .deno, .bun, .dotnet, .lua, .haskell, .aws, .duration, .status, .jobs, .line_break, .character },
     .segments = .{ .open = "▖▚▞", .join = "▞▚", .close = "▚▞▘", .padding = " " },
     .text = .{ .pieces = .{
         .{ .text = "▙", .style = .{ .fg = "#ff0040" } },
@@ -17,6 +17,14 @@
     .rust = .{ .style = .{ .fg = "#0a0a0a", .bg = "#fff200", .bold = true } },
     .go = .{ .style = .{ .fg = "#0a0a0a", .bg = "#fff200", .bold = true } },
     .zig = .{ .style = .{ .fg = "#0a0a0a", .bg = "#fff200", .bold = true } },
+    .java = .{ .style = .{ .fg = "#0a0a0a", .bg = "#fff200", .bold = true } },
+    .ruby = .{ .style = .{ .fg = "#0a0a0a", .bg = "#fff200", .bold = true } },
+    .php = .{ .style = .{ .fg = "#0a0a0a", .bg = "#fff200", .bold = true } },
+    .deno = .{ .style = .{ .fg = "#0a0a0a", .bg = "#fff200", .bold = true } },
+    .bun = .{ .style = .{ .fg = "#0a0a0a", .bg = "#fff200", .bold = true } },
+    .dotnet = .{ .style = .{ .fg = "#0a0a0a", .bg = "#fff200", .bold = true } },
+    .lua = .{ .style = .{ .fg = "#0a0a0a", .bg = "#fff200", .bold = true } },
+    .haskell = .{ .style = .{ .fg = "#0a0a0a", .bg = "#fff200", .bold = true } },
     .aws = .{ .style = .{ .fg = "#fff200", .bg = "#0a0a0a", .bold = true } },
     .duration = .{ .style = .{ .fg = "#ff0040", .bg = "#0a0a0a", .italic = true } },
     .status = .{ .style = .{ .fg = "#ffffff", .bg = "#ff0040", .bold = true, .blink = true } },

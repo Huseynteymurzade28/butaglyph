@@ -2,7 +2,7 @@
 // No boxes: the screen is the box. Needs a truecolor terminal.
 .{
     .separator = " ⁞ ",
-    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character },
+    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .java, .ruby, .php, .deno, .bun, .dotnet, .lua, .haskell, .aws, .duration, .status, .jobs, .line_break, .character },
     .text = .{ .pieces = .{
         .{ .text = "⡇", .style = .{ .fg = "#003b00" } },
         .{ .text = "⣿", .style = .{ .fg = "#008f11" } },
@@ -17,6 +17,14 @@
     .rust = .{ .style = .{ .fg = "#00ff41" } },
     .go = .{ .style = .{ .fg = "#00ff41" } },
     .zig = .{ .style = .{ .fg = "#00ff41" } },
+    .java = .{ .style = .{ .fg = "#00ff41" } },
+    .ruby = .{ .style = .{ .fg = "#00ff41" } },
+    .php = .{ .style = .{ .fg = "#00ff41" } },
+    .deno = .{ .style = .{ .fg = "#00ff41" } },
+    .bun = .{ .style = .{ .fg = "#00ff41" } },
+    .dotnet = .{ .style = .{ .fg = "#00ff41" } },
+    .lua = .{ .style = .{ .fg = "#00ff41" } },
+    .haskell = .{ .style = .{ .fg = "#00ff41" } },
     .aws = .{ .style = .{ .fg = "#00ff41" } },
     .duration = .{ .style = .{ .fg = "#008f11", .italic = true }, .symbol = "t+" },
     .status = .{ .style = .{ .fg = "#ff2a2a", .bold = true }, .symbol = "SIGNAL LOST " },

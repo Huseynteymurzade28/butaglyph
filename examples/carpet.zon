@@ -3,7 +3,7 @@
 // buta (the teardrop motif the project is named after) at each end.
 // Stepped edges, like a carpet's border. Needs a truecolor terminal.
 .{
-    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character },
+    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .java, .ruby, .php, .deno, .bun, .dotnet, .lua, .haskell, .aws, .duration, .status, .jobs, .line_break, .character },
     .segments = .{ .open = "▗▟", .join = "▙▖", .close = "▙▖", .padding = " " },
     .text = .{ .pieces = .{.{ .text = "❧", .style = .{ .fg = "#e6a532", .bold = true } }} },
     .dir = .{
@@ -18,6 +18,14 @@
     .rust = .{ .style = .{ .fg = "#f8ecd4", .bg = "#2f5d3a", .bold = true } },
     .go = .{ .style = .{ .fg = "#f8ecd4", .bg = "#2f5d3a", .bold = true } },
     .zig = .{ .style = .{ .fg = "#f8ecd4", .bg = "#2f5d3a", .bold = true } },
+    .java = .{ .style = .{ .fg = "#f8ecd4", .bg = "#2f5d3a", .bold = true } },
+    .ruby = .{ .style = .{ .fg = "#f8ecd4", .bg = "#2f5d3a", .bold = true } },
+    .php = .{ .style = .{ .fg = "#f8ecd4", .bg = "#2f5d3a", .bold = true } },
+    .deno = .{ .style = .{ .fg = "#f8ecd4", .bg = "#2f5d3a", .bold = true } },
+    .bun = .{ .style = .{ .fg = "#f8ecd4", .bg = "#2f5d3a", .bold = true } },
+    .dotnet = .{ .style = .{ .fg = "#f8ecd4", .bg = "#2f5d3a", .bold = true } },
+    .lua = .{ .style = .{ .fg = "#f8ecd4", .bg = "#2f5d3a", .bold = true } },
+    .haskell = .{ .style = .{ .fg = "#f8ecd4", .bg = "#2f5d3a", .bold = true } },
     .aws = .{ .style = .{ .fg = "#f8ecd4", .bg = "#2f5d3a", .bold = true } },
     .duration = .{ .style = .{ .fg = "#24306e", .bg = "#e6a532", .bold = true } },
     .status = .{ .style = .{ .fg = "#f8ecd4", .bg = "#4a0d16", .bold = true } },

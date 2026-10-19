@@ -2,7 +2,7 @@
 // Braille snow fizzes at the edges of grey segments.
 // Needs a truecolor terminal.
 .{
-    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character },
+    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .java, .ruby, .php, .deno, .bun, .dotnet, .lua, .haskell, .aws, .duration, .status, .jobs, .line_break, .character },
     .segments = .{ .open = "⡀⣄⣶⣿", .join = "⢾⡷", .close = "⣿⡶⠦⠂", .padding = " " },
     .text = .{ .pieces = .{
         .{ .text = "● ", .style = .{ .fg = "#ff1f1f", .bold = true, .blink = true } },
@@ -16,6 +16,14 @@
     .rust = .{ .style = .{ .fg = "#e0e0e0", .bg = "#555555" } },
     .go = .{ .style = .{ .fg = "#e0e0e0", .bg = "#555555" } },
     .zig = .{ .style = .{ .fg = "#e0e0e0", .bg = "#555555" } },
+    .java = .{ .style = .{ .fg = "#e0e0e0", .bg = "#555555" } },
+    .ruby = .{ .style = .{ .fg = "#e0e0e0", .bg = "#555555" } },
+    .php = .{ .style = .{ .fg = "#e0e0e0", .bg = "#555555" } },
+    .deno = .{ .style = .{ .fg = "#e0e0e0", .bg = "#555555" } },
+    .bun = .{ .style = .{ .fg = "#e0e0e0", .bg = "#555555" } },
+    .dotnet = .{ .style = .{ .fg = "#e0e0e0", .bg = "#555555" } },
+    .lua = .{ .style = .{ .fg = "#e0e0e0", .bg = "#555555" } },
+    .haskell = .{ .style = .{ .fg = "#e0e0e0", .bg = "#555555" } },
     .aws = .{ .style = .{ .fg = "#e0e0e0", .bg = "#555555" } },
     .duration = .{ .style = .{ .fg = "#e0e0e0", .bg = "#222222", .italic = true } },
     .status = .{ .style = .{ .fg = "#ffffff", .bg = "#b00000", .bold = true } },

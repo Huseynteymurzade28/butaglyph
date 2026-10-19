@@ -168,8 +168,10 @@ src/
     untracked.zig    the work tree walk for untracked files
     status.zig       staged/modified/deleted/conflicted/untracked, ahead/behind
   modules/*.zig      one file per module
-    lang.zig         what the language modules share: project detection,
-                     $PATH lookup, the version cache
+    lang.zig         what the language modules share: project detection
+                     (directory listings read once), $PATH lookup, the
+                     version cache and its helper, `Simple` modules
+    langs.zig        ruby, php, deno, bun, lua, haskell
   shell/             init scripts (embedded with @embedFile)
 examples/            presets (embedded in the binary by presets.zig)
 docs/tools/          scripts that regenerate the screenshots and the GIF

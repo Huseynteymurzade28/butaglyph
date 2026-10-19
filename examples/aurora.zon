@@ -2,7 +2,7 @@
 // Every module is a gradient blended in OKLab.
 .{
     .separator = "  ",
-    .order = .{ .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character },
+    .order = .{ .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .java, .ruby, .php, .deno, .bun, .dotnet, .lua, .haskell, .aws, .duration, .status, .jobs, .line_break, .character },
     .dir = .{ .style = .{ .fg = "#7ee8fa>#80ff72", .bold = true }, .separator = " ∕ ", .max_length = 40 },
     .git_branch = .{ .style = .{ .fg = "#c471f5>#fa71cd", .italic = true } },
     .git_status = .{ .style = .{ .fg = "#f9d423>#ff4e50" } },
@@ -11,6 +11,14 @@
     .rust = .{ .style = .{ .fg = "#80ff72>#7ee8fa", .italic = true } },
     .go = .{ .style = .{ .fg = "#80ff72>#7ee8fa", .italic = true } },
     .zig = .{ .style = .{ .fg = "#80ff72>#7ee8fa", .italic = true } },
+    .java = .{ .style = .{ .fg = "#80ff72>#7ee8fa", .italic = true } },
+    .ruby = .{ .style = .{ .fg = "#80ff72>#7ee8fa", .italic = true } },
+    .php = .{ .style = .{ .fg = "#80ff72>#7ee8fa", .italic = true } },
+    .deno = .{ .style = .{ .fg = "#80ff72>#7ee8fa", .italic = true } },
+    .bun = .{ .style = .{ .fg = "#80ff72>#7ee8fa", .italic = true } },
+    .dotnet = .{ .style = .{ .fg = "#80ff72>#7ee8fa", .italic = true } },
+    .lua = .{ .style = .{ .fg = "#80ff72>#7ee8fa", .italic = true } },
+    .haskell = .{ .style = .{ .fg = "#80ff72>#7ee8fa", .italic = true } },
     .aws = .{ .style = .{ .fg = "#80ff72>#7ee8fa", .italic = true } },
     .duration = .{ .style = .{ .fg = "#a1c4fd>#c2e9fb" } },
     .status = .{ .style = .{ .fg = "#ff4e50>#f9d423", .bold = true } },

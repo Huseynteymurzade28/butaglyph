@@ -12,8 +12,9 @@ segments and ornaments. The command is `buta`.
 * **Never in the way.** Anything slow or broken is left out of that one
   prompt; the rest is always drawn.
 * **Knows your project.** Python (and its virtual environment), Node.js,
-  Rust, Go and Zig versions, shown only where they matter, read from
-  files or asked once and cached.
+  Rust, Go, Zig, Java, Ruby, PHP, Deno, Bun, .NET, Lua and Haskell
+  versions, shown only where they matter, read from files or asked once
+  and cached.
 * **Knows where commands run.** AWS profile and region, Docker
   context, Kubernetes context and namespace, read from their config
   files.

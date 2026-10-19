@@ -3,7 +3,7 @@
 // Needs a truecolor terminal.
 .{
     .separator = " ━┿━ ",
-    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character },
+    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .java, .ruby, .php, .deno, .bun, .dotnet, .lua, .haskell, .aws, .duration, .status, .jobs, .line_break, .character },
     .text = .{ .pieces = .{
         .{ .text = "┏━", .style = .{ .fg = "#b87333" } },
         .{ .text = "◍", .style = .{ .fg = "#e8c27a", .bold = true } },
@@ -17,6 +17,14 @@
     .rust = .{ .style = .{ .fg = "#7fd6ff" } },
     .go = .{ .style = .{ .fg = "#7fd6ff" } },
     .zig = .{ .style = .{ .fg = "#7fd6ff" } },
+    .java = .{ .style = .{ .fg = "#7fd6ff" } },
+    .ruby = .{ .style = .{ .fg = "#7fd6ff" } },
+    .php = .{ .style = .{ .fg = "#7fd6ff" } },
+    .deno = .{ .style = .{ .fg = "#7fd6ff" } },
+    .bun = .{ .style = .{ .fg = "#7fd6ff" } },
+    .dotnet = .{ .style = .{ .fg = "#7fd6ff" } },
+    .lua = .{ .style = .{ .fg = "#7fd6ff" } },
+    .haskell = .{ .style = .{ .fg = "#7fd6ff" } },
     .aws = .{ .style = .{ .fg = "#7fd6ff" } },
     .duration = .{ .style = .{ .fg = "#e8c27a" }, .symbol = "◷ " },
     .status = .{ .style = .{ .fg = "#ff5f56", .bold = true }, .symbol = "↯ " },

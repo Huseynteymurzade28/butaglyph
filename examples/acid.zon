@@ -2,7 +2,7 @@
 // Rainbow segments with equalizer edges, a branch name in every color at once,
 // a status that blinks. Needs a truecolor terminal.
 .{
-    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character },
+    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .java, .ruby, .php, .deno, .bun, .dotnet, .lua, .haskell, .aws, .duration, .status, .jobs, .line_break, .character },
     .segments = .{ .open = "▁▃▅▇", .join = "▇▅▃▁", .close = "▇▅▃▁", .padding = " " },
     .text = .{ .pieces = .{.{ .text = "✺", .style = .{ .fg = "rainbow", .bold = true } }} },
     .dir = .{
@@ -17,6 +17,14 @@
     .rust = .{ .style = .{ .fg = "#000000", .bg = "#00ffff>#39ff14", .bold = true, .italic = true } },
     .go = .{ .style = .{ .fg = "#000000", .bg = "#00ffff>#39ff14", .bold = true, .italic = true } },
     .zig = .{ .style = .{ .fg = "#000000", .bg = "#00ffff>#39ff14", .bold = true, .italic = true } },
+    .java = .{ .style = .{ .fg = "#000000", .bg = "#00ffff>#39ff14", .bold = true, .italic = true } },
+    .ruby = .{ .style = .{ .fg = "#000000", .bg = "#00ffff>#39ff14", .bold = true, .italic = true } },
+    .php = .{ .style = .{ .fg = "#000000", .bg = "#00ffff>#39ff14", .bold = true, .italic = true } },
+    .deno = .{ .style = .{ .fg = "#000000", .bg = "#00ffff>#39ff14", .bold = true, .italic = true } },
+    .bun = .{ .style = .{ .fg = "#000000", .bg = "#00ffff>#39ff14", .bold = true, .italic = true } },
+    .dotnet = .{ .style = .{ .fg = "#000000", .bg = "#00ffff>#39ff14", .bold = true, .italic = true } },
+    .lua = .{ .style = .{ .fg = "#000000", .bg = "#00ffff>#39ff14", .bold = true, .italic = true } },
+    .haskell = .{ .style = .{ .fg = "#000000", .bg = "#00ffff>#39ff14", .bold = true, .italic = true } },
     .aws = .{ .style = .{ .fg = "#000000", .bg = "#00ffff>#39ff14", .bold = true, .italic = true } },
     .duration = .{ .style = .{ .fg = "#000000", .bg = "#ffff00", .bold = true, .italic = true } },
     .status = .{ .style = .{ .fg = "#ffff00", .bg = "#ff0000", .bold = true, .blink = true } },

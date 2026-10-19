@@ -45,6 +45,14 @@ pub const Config = struct {
     rust: m.rust.Config = .{},
     go: m.go.Config = .{},
     zig: m.zig.Config = .{},
+    java: m.java.Config = .{},
+    ruby: m.ruby.Config = .{},
+    php: m.php.Config = .{},
+    deno: m.deno.Config = .{},
+    bun: m.bun.Config = .{},
+    dotnet: m.dotnet.Config = .{},
+    lua: m.lua.Config = .{},
+    haskell: m.haskell.Config = .{},
     docker_context: m.docker_context.Config = .{},
     kubernetes: m.kubernetes.Config = .{},
     aws: m.aws.Config = .{},
@@ -68,7 +76,7 @@ pub const Segments = struct {
     padding: []const u8 = " ",
 };
 
-pub const default_order = [_]module.Id{ .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character };
+pub const default_order = [_]module.Id{ .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .java, .ruby, .php, .deno, .bun, .dotnet, .lua, .haskell, .aws, .duration, .status, .jobs, .line_break, .character };
 
 /// Largest config file we accept; larger files are reported and ignored.
 const max_file_size = 64 * 1024;

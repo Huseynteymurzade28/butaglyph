@@ -24,6 +24,14 @@ pub const Glyphs = struct {
     rust: []const u8,
     go: []const u8,
     zig: []const u8,
+    java: []const u8,
+    ruby: []const u8,
+    php: []const u8,
+    deno: []const u8,
+    bun: []const u8,
+    dotnet: []const u8,
+    lua: []const u8,
+    haskell: []const u8,
     docker: []const u8,
     kubernetes: []const u8,
     aws: []const u8,
@@ -54,6 +62,14 @@ pub const unicode: Glyphs = .{
     .rust = "rs ",
     .go = "go ",
     .zig = "zig ",
+    .java = "java ",
+    .ruby = "rb ",
+    .php = "php ",
+    .deno = "deno ",
+    .bun = "bun ",
+    .dotnet = ".NET ",
+    .lua = "lua ",
+    .haskell = "\u{3bb} ", // λ
     .docker = "docker ",
     .kubernetes = "\u{2388} ", // ⎈ (helm)
     .aws = "aws ",
@@ -81,6 +97,14 @@ pub const nerd: Glyphs = .{
     .rust = "\u{e7a8} ", // nf-dev-rust
     .go = "\u{e627} ", // nf-seti-go
     .zig = "\u{e6a9} ", // nf-seti-zig
+    .java = "\u{e738} ", // nf-dev-java
+    .ruby = "\u{e739} ", // nf-dev-ruby
+    .php = "\u{e73d} ", // nf-dev-php
+    .deno = "\u{e7c0} ", // nf-dev-denojs
+    .bun = "\u{e76f} ", // nf-dev-bun
+    .dotnet = "\u{e77f} ", // nf-dev-dotnet
+    .lua = "\u{e620} ", // nf-seti-lua
+    .haskell = "\u{e777} ", // nf-dev-haskell
     .docker = "\u{f308} ", // nf-linux-docker
     .kubernetes = "\u{2388} ", // ⎈ (helm)
     .aws = "\u{e33d} ", // nf-dev-aws
@@ -108,6 +132,14 @@ pub const ascii: Glyphs = .{
     .rust = "rs ",
     .go = "go ",
     .zig = "zig ",
+    .java = "java ",
+    .ruby = "rb ",
+    .php = "php ",
+    .deno = "deno ",
+    .bun = "bun ",
+    .dotnet = ".NET ",
+    .lua = "lua ",
+    .haskell = "hs ",
     .docker = "docker ",
     .kubernetes = "k8s ",
     .aws = "aws ",

@@ -51,6 +51,14 @@ pub const Id = enum {
     rust,
     go,
     zig,
+    java,
+    ruby,
+    php,
+    deno,
+    bun,
+    dotnet,
+    lua,
+    haskell,
     docker_context,
     kubernetes,
     aws,
@@ -106,6 +114,14 @@ pub const impls = struct {
     pub const rust = @import("modules/rust.zig");
     pub const go = @import("modules/go.zig");
     pub const zig = @import("modules/zig.zig");
+    pub const java = @import("modules/java.zig");
+    pub const ruby = @import("modules/langs.zig").ruby;
+    pub const php = @import("modules/langs.zig").php;
+    pub const deno = @import("modules/langs.zig").deno;
+    pub const bun = @import("modules/langs.zig").bun;
+    pub const dotnet = @import("modules/dotnet.zig");
+    pub const lua = @import("modules/langs.zig").lua;
+    pub const haskell = @import("modules/langs.zig").haskell;
     pub const docker_context = @import("modules/docker_context.zig");
     pub const kubernetes = @import("modules/kubernetes.zig");
     pub const aws = @import("modules/aws.zig");
@@ -132,6 +148,14 @@ pub const Data = union(Id) {
     rust: impls.rust.Data,
     go: impls.go.Data,
     zig: impls.zig.Data,
+    java: impls.java.Data,
+    ruby: impls.ruby.Data,
+    php: impls.php.Data,
+    deno: impls.deno.Data,
+    bun: impls.bun.Data,
+    dotnet: impls.dotnet.Data,
+    lua: impls.lua.Data,
+    haskell: impls.haskell.Data,
     docker_context: impls.docker_context.Data,
     kubernetes: impls.kubernetes.Data,
     aws: impls.aws.Data,

@@ -16,32 +16,184 @@ const Allocator = std.mem.Allocator;
 const Context = @import("../context.zig").Context;
 const env = @import("../env.zig");
 const render_mod = @import("../render.zig");
+const module = @import("../module.zig");
+const Glyphs = @import("../glyphs.zig").Glyphs;
 const Line = render_mod.Line;
+
+/// What a language module needs when nothing about it is special: its
+/// project files, its tool and how to ask it for its version.
+pub const Spec = struct {
+    id: module.Id,
+    /// The default color.
+    color: []const u8,
+    files: []const []const u8,
+    extensions: []const []const u8 = &.{},
+    tool: []const u8,
+    version_args: []const []const u8 = &.{"--version"},
+};
+
+/// A language module from a `Spec`: shown in a project of its language,
+/// with the tool's version (see `probe`).
+pub fn Simple(comptime spec: Spec) type {
+    return struct {
+        pub const id: module.Id = spec.id;
+        pub const cost: module.Cost = .expensive;
+        pub const batch = true;
+
+        pub const Config = struct {
+            style: render_mod.Style = .{ .fg = spec.color, .bold = true },
+            symbol: ?[]const u8 = null,
+            version_prefix: []const u8 = "v",
+            detect: Detect = .{ .files = spec.files, .extensions = spec.extensions },
+            /// Overrides the global `timeout_ms` for this module.
+            timeout_ms: ?u32 = null,
+        };
+
+        pub const Data = struct { version: ?[]const u8 };
+
+        pub fn compute(ctx: *const Context, cfg: *const Config, arena: Allocator) !?Data {
+            _ = try findProject(ctx, arena, cfg.detect) orelse return null;
+            const exe = try which(ctx, arena, spec.tool) orelse return .{ .version = null };
+            return .{ .version = try probe(ctx, arena, exe, spec.version_args) };
+        }
+
+        pub fn render(data: *const Data, cfg: *const Config, g: *const Glyphs, line: *Line) Line.Error!void {
+            try draw(line, cfg.style, cfg.symbol orelse @field(g, @tagName(spec.id)), cfg.version_prefix, data.version, null);
+        }
+    };
+}
 
 /// Options every language module has, in its Config next to `style` and
 /// `symbol`.
 pub const Detect = struct {
     /// Files (or directories) that mark a project of this language.
     files: []const []const u8,
+    /// File extensions (without the dot) that mark one too. Only the
+    /// working directory itself is searched for these.
+    extensions: []const []const u8 = &.{},
     /// Also look in parent directories, up to (not above) $HOME.
     search_parents: bool = true,
 };
 
 /// The directory that holds one of `d.files`: the working directory or,
-/// with `search_parents`, the nearest parent. null outside a project.
+/// with `search_parents`, the nearest parent. Files with one of
+/// `d.extensions` count in the working directory. null outside a project.
 pub fn findProject(ctx: *const Context, arena: Allocator, d: Detect) !?[]const u8 {
+    const levels = dirListings(ctx);
     var dir: []const u8 = ctx.physical_cwd;
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
-    while (true) {
+    var level: usize = 0;
+    while (true) : (level += 1) {
+        const listing: ?*const Listing = if (level < levels.len and std.mem.eql(u8, levels[level].dir, dir)) &levels[level] else null;
         for (d.files) |name| {
-            const p = std.fmt.bufPrint(&buf, "{s}/{s}", .{ trimSlash(dir), name }) catch continue;
-            if (exists(ctx.io, p)) return try arena.dupe(u8, dir);
+            if (contains(ctx.io, listing, dir, name)) return try arena.dupe(u8, dir);
+        }
+        if (level == 0 and d.extensions.len > 0 and hasExtension(ctx.io, listing, dir, d.extensions)) {
+            return try arena.dupe(u8, dir);
         }
         if (!d.search_parents) return null;
         if (ctx.home) |h| if (env.startsWithPath(dir, h) and dir.len == h.len) return null;
         dir = parent(dir) orelse return null;
     }
 }
+
+/// A directory's entries, read once and shared by the language modules:
+/// sixteen modules looking for their project files cost a few directory
+/// reads instead of a few hundred `access` calls.
+const Listing = struct {
+    dir: []const u8,
+    names: []const []const u8,
+    /// More than `max_entries` entries: `names` is empty, and the file
+    /// system is asked about each name instead.
+    truncated: bool,
+};
+
+/// The listings of the working directory and its parents up to $HOME, read
+/// on first use. The working directory is the same for every module of a
+/// process; one that asks about another directory gets none.
+var listings: []const Listing = &.{};
+var listings_cwd: []const u8 = "";
+var listing_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+/// 0: not read, 1: being read, 2: ready.
+var listings_state: std.atomic.Value(u8) = .init(0);
+
+fn dirListings(ctx: *const Context) []const Listing {
+    if (listings_state.cmpxchgStrong(0, 1, .acquire, .acquire) == null) {
+        readListings(ctx);
+        listings_state.store(2, .release);
+    } else {
+        while (listings_state.load(.acquire) != 2) std.atomic.spinLoopHint();
+    }
+    return if (std.mem.eql(u8, listings_cwd, ctx.physical_cwd)) listings else &.{};
+}
+
+fn readListings(ctx: *const Context) void {
+    // Lives until the process exits, like the module tasks that read it.
+    const gpa = listing_arena.allocator();
+    var all: std.ArrayList(Listing) = .empty;
+    var dir: []const u8 = gpa.dupe(u8, ctx.physical_cwd) catch return;
+    listings_cwd = dir;
+    for (0..64) |_| {
+        all.append(gpa, readListing(ctx.io, gpa, dir) orelse break) catch break;
+        if (ctx.home) |h| if (env.startsWithPath(dir, h) and dir.len == h.len) break;
+        dir = parent(dir) orelse break;
+    }
+    listings = all.items;
+}
+
+fn readListing(io: Io, gpa: Allocator, path: []const u8) ?Listing {
+    var dir = Io.Dir.cwd().openDir(io, path, .{ .iterate = true }) catch return null;
+    defer dir.close(io);
+    var names: std.ArrayList([]const u8) = .empty;
+    var it = dir.iterate();
+    while (it.next(io) catch return null) |entry| {
+        if (names.items.len == max_entries) return .{ .dir = path, .names = &.{}, .truncated = true };
+        names.append(gpa, gpa.dupe(u8, entry.name) catch return null) catch return null;
+    }
+    return .{ .dir = path, .names = names.items, .truncated = false };
+}
+
+fn contains(io: Io, listing: ?*const Listing, dir: []const u8, name: []const u8) bool {
+    if (listing) |l| if (!l.truncated) {
+        for (l.names) |n| if (sameName(n, name)) return true;
+        return false;
+    };
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const p = std.fmt.bufPrint(&buf, "{s}/{s}", .{ trimSlash(dir), name }) catch return false;
+    return exists(io, p);
+}
+
+/// Windows file names are case-insensitive.
+fn sameName(a: []const u8, b: []const u8) bool {
+    return if (env.is_windows) std.ascii.eqlIgnoreCase(a, b) else std.mem.eql(u8, a, b);
+}
+
+/// Whether `dir` holds a file ending in `.<ext>` for one of `exts`. Only
+/// the first `max_entries` entries count: a huge directory costs no more
+/// than a small one.
+fn hasExtension(io: Io, listing: ?*const Listing, dir_path: []const u8, exts: []const []const u8) bool {
+    if (listing) |l| if (!l.truncated) {
+        for (l.names) |n| if (extensionIn(n, exts)) return true;
+        return false;
+    };
+    var dir = Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch return false;
+    defer dir.close(io);
+    var it = dir.iterate();
+    var n: usize = 0;
+    while (it.next(io) catch null) |entry| : (n += 1) {
+        if (n == max_entries) return false;
+        if (extensionIn(entry.name, exts)) return true;
+    }
+    return false;
+}
+
+fn extensionIn(name: []const u8, exts: []const []const u8) bool {
+    const dot = std.mem.lastIndexOfScalar(u8, name, '.') orelse return false;
+    if (dot == 0) return false; // `.lua` is a hidden file, not a Lua file
+    for (exts) |e| if (std.ascii.eqlIgnoreCase(name[dot + 1 ..], e)) return true;
+    return false;
+}
+
+const max_entries = 1000;
 
 fn exists(io: Io, path: []const u8) bool {
     Io.Dir.cwd().access(io, path, .{}) catch return false;
@@ -271,7 +423,10 @@ fn writeCache(io: Io, arena: Allocator, dir: []const u8, key: []const u8, versio
 /// `go version go1.22.1 linux/amd64` and `0.16.0` all work.
 pub fn parseVersion(out: []const u8) ?[]const u8 {
     var it = std.mem.tokenizeAny(u8, out, " \t\r\n");
-    while (it.next()) |word| {
+    while (it.next()) |raw| {
+        // Java quotes it: openjdk version "21.0.2" 2024-01-16
+        const word = std.mem.trim(u8, raw, "\"'");
+        if (word.len == 0) continue;
         const w = if (std.mem.startsWith(u8, word, "go")) word[2..] else if (word[0] == 'v') word[1..] else word;
         if (w.len > 0 and std.ascii.isDigit(w[0])) return std.mem.trimEnd(u8, w, ",;");
     }
@@ -316,6 +471,11 @@ test parseVersion {
         .{ "go version go1.22.1 linux/amd64\n", "1.22.1" },
         .{ "0.16.0\n", "0.16.0" },
         .{ "0.15.0-dev.1+abc\r\n", "0.15.0-dev.1+abc" },
+        .{ "openjdk version \"21.0.2\" 2024-01-16\n", "21.0.2" },
+        .{ "ruby 3.3.0 (2023-12-25 revision 5124f9ac75) [x86_64-linux]\n", "3.3.0" },
+        .{ "PHP 8.3.1 (cli) (built: Dec 20 2023)\n", "8.3.1" },
+        .{ "deno 2.1.4 (stable, release, x86_64-unknown-linux-gnu)\n", "2.1.4" },
+        .{ "Lua 5.4.6  Copyright (C) 1994-2023 Lua.org, PUC-Rio\n", "5.4.6" },
     };
     for (cases) |c| try std.testing.expectEqualStrings(c[1], parseVersion(c[0]).?);
     try std.testing.expectEqual(@as(?[]const u8, null), parseVersion("no version here"));
@@ -374,4 +534,24 @@ test isShim {
     try std.testing.expect(isShim("/home/u/.pyenv/shims/python"));
     try std.testing.expect(isShim("/home/u/.volta/bin/node"));
     try std.testing.expect(!isShim("/usr/bin/node"));
+}
+
+test hasExtension {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const io = std.testing.io;
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const dir = env.toSlashes(try tmp.dir.realPathFileAlloc(io, ".", arena.allocator()));
+    try tmp.dir.writeFile(io, .{ .sub_path = ".lua", .data = "" });
+    try std.testing.expect(!hasExtension(io, null, dir, &.{"lua"}));
+    try tmp.dir.writeFile(io, .{ .sub_path = "App.CSPROJ", .data = "" });
+    try std.testing.expect(hasExtension(io, null, dir, &.{ "sln", "csproj" }));
+    try std.testing.expect(!hasExtension(io, null, dir, &.{"cabal"}));
+    // The same answers from a listing.
+    const l = readListing(io, arena.allocator(), dir).?;
+    try std.testing.expect(hasExtension(io, &l, dir, &.{ "sln", "csproj" }));
+    try std.testing.expect(!hasExtension(io, &l, dir, &.{"lua"}));
+    try std.testing.expect(contains(io, &l, dir, "App.CSPROJ"));
+    try std.testing.expect(!contains(io, &l, dir, "pom.xml"));
 }

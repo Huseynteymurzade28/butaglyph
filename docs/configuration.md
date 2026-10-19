@@ -59,7 +59,7 @@ config never costs you the prompt.
     // .unicode (default, any font), .nerd (icons, needs a Nerd Font) or .ascii
     .glyphs = .unicode,
     // Modules in display order; modules left out are never computed.
-    .order = .{ .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character },
+    .order = .{ .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .java, .ruby, .php, .deno, .bun, .dotnet, .lua, .haskell, .aws, .duration, .status, .jobs, .line_break, .character },
     .separator = " ",
     // Deadline for expensive modules (git, languages), in ms from prompt start.
     .timeout_ms = 100,
@@ -181,6 +181,7 @@ powerline chevron, with a Nerd Font). The root of an absolute path stays
 | `rust`       | The active rustup toolchain's `rustc` version, in a Cargo project | `symbol`, `version_prefix`, `detect`, `timeout_ms` |
 | `go`         | Go version, in a Go module or workspace                       | `symbol`, `version_prefix`, `detect`, `timeout_ms` |
 | `zig`        | Zig version, in a Zig project                                 | `symbol`, `version_prefix`, `detect`, `timeout_ms` |
+| `java`, `ruby`, `php`, `deno`, `bun`, `dotnet`, `lua`, `haskell` | The language's version, in a project of it (`dotnet`: the SDK, `haskell`: GHC) | `symbol`, `version_prefix`, `detect`, `timeout_ms` |
 | `aws`        | The AWS profile and region set in this shell                  | `symbol`, `show_region`, `timeout_ms` |
 | `docker_context` | The Docker context, unless it is `default`. Not in the default order | `symbol`, `timeout_ms` |
 | `kubernetes` | The Kubernetes context and its namespace. Not in the default order | `symbol`, `show_namespace`, `timeout_ms` |
@@ -199,9 +200,11 @@ altogether.
 
 ### Language modules
 
-`python`, `node`, `rust`, `go` and `zig` show up only inside a project of
+`python`, `node`, `rust`, `go`, `zig`, `java`, `ruby`, `php`, `deno`,
+`bun`, `dotnet`, `lua` and `haskell` show up only inside a project of
 their language: a directory that holds one of the `detect` files, or
-below one (up to your home directory). Each module shows its tool's
+below one (up to your home directory), or a working directory with a file
+of one of the `detect` extensions (`*.csproj`, `*.cabal`). Each module shows its tool's
 version, and the module alone (no version) when the tool isn't
 installed.
 
@@ -220,10 +223,20 @@ installed.
 | `rust`   | `Cargo.toml`, `rust-toolchain.toml`, `rust-toolchain` |
 | `go`     | `go.mod`, `go.work` |
 | `zig`    | `build.zig`, `build.zig.zon` |
+| `java`   | `pom.xml`, `build.gradle(.kts)`, `settings.gradle(.kts)`, `.java-version`, `.sdkmanrc`; `*.java` |
+| `ruby`   | `Gemfile`, `.ruby-version`, `Rakefile`; `*.gemspec` |
+| `php`    | `composer.json`, `.php-version`; `*.php` |
+| `deno`   | `deno.json`, `deno.jsonc`, `deno.lock` |
+| `bun`    | `bun.lock`, `bun.lockb`, `bunfig.toml` |
+| `dotnet` | `global.json`, `Directory.Build.props`, `Directory.Build.targets`, `Directory.Packages.props`; `*.csproj`, `*.fsproj`, `*.vbproj`, `*.sln`, `*.slnx` |
+| `lua`    | `.lua-version`, `.luarc.json`, `stylua.toml`; `*.lua`, `*.rockspec` |
+| `haskell`| `stack.yaml`, `cabal.project`, `package.yaml`; `*.cabal`, `*.hs` |
 
 Where it can, buta reads the version from a file instead of running the
 tool. A virtual environment's version comes from its `pyvenv.cfg`, and
-Go's comes from the `VERSION` file of the installation. For Rust, buta
+Go's comes from the `VERSION` file of the installation, Java's from the
+JDK's `release` file (no JVM starts), and a `global.json` that pins the
+.NET SDK is read as is. For Rust, buta
 picks the toolchain the way rustup does: `$RUSTUP_TOOLCHAIN`, then
 `rustup override` and `rust-toolchain` files from the working directory
 up, then the default. It then asks that toolchain's own `rustc`, so the

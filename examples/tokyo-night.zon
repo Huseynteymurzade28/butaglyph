@@ -2,7 +2,7 @@
 // Truecolor, and the job count is always shown.
 .{
     .separator = " · ",
-    .order = .{ .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character },
+    .order = .{ .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .java, .ruby, .php, .deno, .bun, .dotnet, .lua, .haskell, .aws, .duration, .status, .jobs, .line_break, .character },
     .dir = .{ .style = .{ .fg = "#7aa2f7", .bold = true }, .max_length = 32, .full_dirs = 2 },
     .git_branch = .{ .style = .{ .fg = "#bb9af7" } },
     .git_status = .{ .style = .{ .fg = "#e0af68" } },
@@ -11,6 +11,14 @@
     .rust = .{ .style = .{ .fg = "#ff9e64" } },
     .go = .{ .style = .{ .fg = "#ff9e64" } },
     .zig = .{ .style = .{ .fg = "#ff9e64" } },
+    .java = .{ .style = .{ .fg = "#ff9e64" } },
+    .ruby = .{ .style = .{ .fg = "#ff9e64" } },
+    .php = .{ .style = .{ .fg = "#ff9e64" } },
+    .deno = .{ .style = .{ .fg = "#ff9e64" } },
+    .bun = .{ .style = .{ .fg = "#ff9e64" } },
+    .dotnet = .{ .style = .{ .fg = "#ff9e64" } },
+    .lua = .{ .style = .{ .fg = "#ff9e64" } },
+    .haskell = .{ .style = .{ .fg = "#ff9e64" } },
     .aws = .{ .style = .{ .fg = "#ff9e64" } },
     .duration = .{ .style = .{ .fg = "#7dcfff" }, .min_ms = 1000 },
     .status = .{ .style = .{ .fg = "#f7768e", .bold = true } },

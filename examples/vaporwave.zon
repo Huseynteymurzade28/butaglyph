@@ -2,7 +2,7 @@
 // A marble-statue calm. Needs a truecolor terminal; the full-width
 // letters come from your system's CJK font.
 .{
-    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character },
+    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .java, .ruby, .php, .deno, .bun, .dotnet, .lua, .haskell, .aws, .duration, .status, .jobs, .line_break, .character },
     .segments = .{ .open = "░▒▓", .join = "▓▒░", .close = "▓▒░", .padding = " " },
     .text = .{ .pieces = .{.{ .text = "ＶＡＰＯＲ ", .style = .{ .fg = "#ff71ce>#01cdfe", .bold = true, .italic = true } }} },
     .dir = .{ .style = .{ .fg = "#ffffff", .bg = "#ff71ce>#b967ff", .bold = true }, .separator = " ／ ", .home_symbol = "～" },
@@ -13,6 +13,14 @@
     .rust = .{ .style = .{ .fg = "#2d1b4e", .bg = "#fffb96", .bold = true } },
     .go = .{ .style = .{ .fg = "#2d1b4e", .bg = "#fffb96", .bold = true } },
     .zig = .{ .style = .{ .fg = "#2d1b4e", .bg = "#fffb96", .bold = true } },
+    .java = .{ .style = .{ .fg = "#2d1b4e", .bg = "#fffb96", .bold = true } },
+    .ruby = .{ .style = .{ .fg = "#2d1b4e", .bg = "#fffb96", .bold = true } },
+    .php = .{ .style = .{ .fg = "#2d1b4e", .bg = "#fffb96", .bold = true } },
+    .deno = .{ .style = .{ .fg = "#2d1b4e", .bg = "#fffb96", .bold = true } },
+    .bun = .{ .style = .{ .fg = "#2d1b4e", .bg = "#fffb96", .bold = true } },
+    .dotnet = .{ .style = .{ .fg = "#2d1b4e", .bg = "#fffb96", .bold = true } },
+    .lua = .{ .style = .{ .fg = "#2d1b4e", .bg = "#fffb96", .bold = true } },
+    .haskell = .{ .style = .{ .fg = "#2d1b4e", .bg = "#fffb96", .bold = true } },
     .aws = .{ .style = .{ .fg = "#2d1b4e", .bg = "#fffb96", .bold = true } },
     .duration = .{ .style = .{ .fg = "#ffffff", .bg = "#b967ff", .italic = true } },
     .status = .{ .style = .{ .fg = "#ffffff", .bg = "#ff3f8e", .bold = true } },

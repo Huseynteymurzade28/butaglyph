@@ -1,7 +1,7 @@
 // pixel: an 8-bit handheld, four greens and dithered edges.
 // Needs a truecolor terminal.
 .{
-    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .character },
+    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .java, .ruby, .php, .deno, .bun, .dotnet, .lua, .haskell, .aws, .duration, .status, .jobs, .character },
     .segments = .{ .open = "▗▞", .join = "▞", .close = "▚▖", .padding = " " },
     .text = .{ .pieces = .{.{ .text = "▞▚", .style = .{ .fg = "#8bac0f" } }} },
     .dir = .{ .style = .{ .fg = "#9bbc0f", .bg = "#306230", .bold = true }, .max_length = 0 },
@@ -12,6 +12,14 @@
     .rust = .{ .style = .{ .fg = "#9bbc0f", .bg = "#306230", .bold = true } },
     .go = .{ .style = .{ .fg = "#9bbc0f", .bg = "#306230", .bold = true } },
     .zig = .{ .style = .{ .fg = "#9bbc0f", .bg = "#306230", .bold = true } },
+    .java = .{ .style = .{ .fg = "#9bbc0f", .bg = "#306230", .bold = true } },
+    .ruby = .{ .style = .{ .fg = "#9bbc0f", .bg = "#306230", .bold = true } },
+    .php = .{ .style = .{ .fg = "#9bbc0f", .bg = "#306230", .bold = true } },
+    .deno = .{ .style = .{ .fg = "#9bbc0f", .bg = "#306230", .bold = true } },
+    .bun = .{ .style = .{ .fg = "#9bbc0f", .bg = "#306230", .bold = true } },
+    .dotnet = .{ .style = .{ .fg = "#9bbc0f", .bg = "#306230", .bold = true } },
+    .lua = .{ .style = .{ .fg = "#9bbc0f", .bg = "#306230", .bold = true } },
+    .haskell = .{ .style = .{ .fg = "#9bbc0f", .bg = "#306230", .bold = true } },
     .aws = .{ .style = .{ .fg = "#9bbc0f", .bg = "#306230", .bold = true } },
     .duration = .{ .style = .{ .fg = "#9bbc0f", .bg = "#0f380f" } },
     .status = .{ .style = .{ .fg = "#9bbc0f", .bg = "#0f380f", .bold = true, .inverse = false } },
