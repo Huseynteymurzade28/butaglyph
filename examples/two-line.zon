@@ -1,7 +1,7 @@
 // two-line: details above, the command below.
 // A left border ties the two lines together.
 .{
-    .order = .{ .dir, .git_branch, .git_status, .jobs, .duration, .status, .line_break, .character },
+    .order = .{ .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .jobs, .duration, .status, .line_break, .character },
     .dir = .{ .style = .{ .fg = "cyan", .bold = true }, .abbreviate = false },
     .git_branch = .{ .style = .{ .fg = "magenta" }, .max_length = 24 },
     .duration = .{ .min_ms = 500 },

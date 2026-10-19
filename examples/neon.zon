@@ -2,7 +2,7 @@
 // A hot pink to violet path, and a prompt arrow that glows from pink to
 // cyan. Needs a truecolor terminal.
 .{
-    .order = .{ .dir, .git_branch, .git_status, .duration, .status, .jobs, .line_break, .character },
+    .order = .{ .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character },
     .segments = .{ .open = "░▒▓", .join = "▓▒░", .close = "▓▒░", .padding = " " },
     .dir = .{
         .style = .{ .fg = "#fff4fb", .bg = "#ff2a6d>#b300c5", .bold = true },
@@ -10,6 +10,12 @@
     },
     .git_branch = .{ .style = .{ .fg = "#05d9e8", .bg = "#2b0f54", .bold = true } },
     .git_status = .{ .style = .{ .fg = "#ff6ec7", .bg = "#2b0f54", .bold = true } },
+    .python = .{ .style = .{ .fg = "#f9c80e", .bg = "#1a0933", .bold = true } },
+    .node = .{ .style = .{ .fg = "#f9c80e", .bg = "#1a0933", .bold = true } },
+    .rust = .{ .style = .{ .fg = "#f9c80e", .bg = "#1a0933", .bold = true } },
+    .go = .{ .style = .{ .fg = "#f9c80e", .bg = "#1a0933", .bold = true } },
+    .zig = .{ .style = .{ .fg = "#f9c80e", .bg = "#1a0933", .bold = true } },
+    .aws = .{ .style = .{ .fg = "#f9c80e", .bg = "#1a0933", .bold = true } },
     .duration = .{ .style = .{ .fg = "#1a0933", .bg = "#05d9e8>#00f5a0", .bold = true } },
     .status = .{ .style = .{ .fg = "#fff4fb", .bg = "#ff124f", .bold = true } },
     .jobs = .{ .style = .{ .fg = "#1a0933", .bg = "#f9c80e" } },
