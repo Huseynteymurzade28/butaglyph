@@ -6,14 +6,15 @@
 # Builds buta, sets up a demo repository (with an upstream) under a fake
 # $HOME in work-dir, plays scenes in zsh and pwsh inside tmux, and renders
 # the captures with render.py, and records docs/demo.gif. Needs zig, git,
-# tmux, zsh, chromium and DejaVu Sans Mono (a plain font, to show that no
-# Nerd Font is needed); pwsh (PWSH=/path/to/pwsh) and agg (for the GIF) are
-# optional.
+# tmux, zsh, chromium and JetBrainsMono Nerd Font (the presets need no
+# Nerd Font, it is just the nicest monospace font around; FONT="DejaVu Sans
+# Mono" renders in a plain one); pwsh (PWSH=/path/to/pwsh) and agg (for the
+# GIF) are optional.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
-font="DejaVu Sans Mono"
-render() { python3 "$root/docs/tools/render.py" "$@" --font "$font"; }
+font=${FONT:-JetBrainsMono Nerd Font Mono}
+render() { python3 "$root/docs/tools/render.py" "$@" ${FONT:+--font "$FONT"}; }
 work=${1:-$(mktemp -d)}
 out=$root/docs
 home=$work/home
