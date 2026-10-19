@@ -1,5 +1,6 @@
-//! Current directory: $HOME shown as `~`, intermediate directories
-//! abbreviated fish-style (`~/d/b/src`) once the path gets long.
+//! Current directory, intermediate directories abbreviated fish-style
+//! (`/home/me/d/b/src`) once the path gets long. The home directory itself
+//! is never abbreviated; with `collapse_home` it is shown as `~`.
 
 const std = @import("std");
 const Writer = std.Io.Writer;
@@ -15,6 +16,9 @@ pub const cost: module.Cost = .cheap;
 
 pub const Config = struct {
     style: render_mod.Style = .{ .fg = "cyan", .bold = true },
+    /// Show the home directory as `home_symbol` (`~/dev`) instead of its
+    /// path (`/home/me/dev`).
+    collapse_home: bool = false,
     home_symbol: []const u8 = "~",
     abbreviate: bool = true,
     /// Abbreviate only when the full path is longer than this many
@@ -33,16 +37,23 @@ pub const Data = struct {
     /// With `home_relative`, the part after $HOME ("" or "/..."); otherwise the absolute path.
     path: []const u8,
     home_relative: bool,
+    /// Leading components that are never abbreviated: the home directory's,
+    /// when it is shown as a path.
+    keep: u8 = 0,
 };
 
-pub fn compute(ctx: *const Context, _: *const Config, _: std.mem.Allocator) !?Data {
-    return split(ctx.cwd, ctx.home);
+pub fn compute(ctx: *const Context, cfg: *const Config, _: std.mem.Allocator) !?Data {
+    return split(ctx.cwd, ctx.home, cfg.collapse_home);
 }
 
-fn split(cwd: []const u8, home: ?[]const u8) Data {
+fn split(cwd: []const u8, home: ?[]const u8, collapse: bool) Data {
     if (home) |h| {
         if (env.startsWithPath(cwd, h) and (cwd.len == h.len or cwd[h.len] == '/')) {
-            return .{ .path = cwd[h.len..], .home_relative = true };
+            if (collapse) return .{ .path = cwd[h.len..], .home_relative = true };
+            var n: usize = 0;
+            var it = std.mem.tokenizeScalar(u8, h, '/');
+            while (it.next()) |_| n += 1;
+            return .{ .path = cwd, .home_relative = false, .keep = @intCast(@min(n, 255)) };
         }
     }
     return .{ .path = cwd, .home_relative = false };
@@ -82,12 +93,13 @@ pub fn formatPath(w: *Writer, data: Data, cfg: *const Config) Writer.Error!void 
     while (it.next()) |comp| : (i += 1) {
         // Slashes that belong to the root stay slashes: `/usr`, `C:/Users`,
         // `//server/share/dir`.
-        if (drive and i == 0) {} else if (!data.home_relative and i <= root_comps) {
+        if (drive and i == 0) {} else if (i < data.keep or (data.keep == 0 and !data.home_relative and i <= root_comps)) {
+            // Inside the root or the home directory, `/` stays `/`.
             try w.writeByte('/');
         } else {
             try w.writeAll(sep);
         }
-        if (i < root_comps) {
+        if (i < root_comps or i < data.keep) {
             try w.writeAll(comp);
             if (drive and total == 1) try w.writeByte('/');
         } else if (!abbreviate or i + cfg.full_dirs >= total) {
@@ -116,30 +128,30 @@ fn codepoints(s: []const u8) usize {
 fn expectPath(expected: []const u8, cwd: []const u8, home: ?[]const u8, cfg: Config) !void {
     var buf: [256]u8 = undefined;
     var w: Writer = .fixed(&buf);
-    try formatPath(&w, split(cwd, home), &cfg);
+    try formatPath(&w, split(cwd, home, cfg.collapse_home), &cfg);
     try std.testing.expectEqualStrings(expected, w.buffered());
 }
 
 test "home substitution" {
-    try expectPath("~", "/home/u", "/home/u", .{});
-    try expectPath("~/src", "/home/u/src", "/home/u", .{});
-    try expectPath("/home/user2", "/home/user2", "/home/u", .{});
-    try expectPath("/etc", "/etc", "/home/u", .{});
-    try expectPath("/", "/", "/home/u", .{});
+    try expectPath("~", "/home/u", "/home/u", .{ .collapse_home = true });
+    try expectPath("~/src", "/home/u/src", "/home/u", .{ .collapse_home = true });
+    try expectPath("/home/user2", "/home/user2", "/home/u", .{ .collapse_home = true });
+    try expectPath("/etc", "/etc", "/home/u", .{ .collapse_home = true });
+    try expectPath("/", "/", "/home/u", .{ .collapse_home = true });
     try expectPath("/etc", "/etc", null, .{});
-    try expectPath("H/x", "/home/u/x", "/home/u", .{ .home_symbol = "H" });
+    try expectPath("H/x", "/home/u/x", "/home/u", .{ .collapse_home = true, .home_symbol = "H" });
 }
 
 test "short paths are left alone" {
-    try expectPath("~/dev/butaglyph/src", "/home/u/dev/butaglyph/src", "/home/u", .{});
+    try expectPath("~/dev/butaglyph/src", "/home/u/dev/butaglyph/src", "/home/u", .{ .collapse_home = true });
 }
 
 test "long paths are abbreviated fish-style" {
     const long = "/home/u/dev/projects/butaglyph/src/modules";
-    try expectPath("~/d/p/b/s/modules", long, "/home/u", .{});
-    try expectPath("~/d/p/b/src/modules", long, "/home/u", .{ .full_dirs = 2 });
-    try expectPath("~/de/pr/bu/sr/modules", long, "/home/u", .{ .abbrev_len = 2 });
-    try expectPath("~/dev/projects/butaglyph/src/modules", long, "/home/u", .{ .abbreviate = false });
+    try expectPath("~/d/p/b/s/modules", long, "/home/u", .{ .collapse_home = true });
+    try expectPath("~/d/p/b/src/modules", long, "/home/u", .{ .collapse_home = true, .full_dirs = 2 });
+    try expectPath("~/de/pr/bu/sr/modules", long, "/home/u", .{ .collapse_home = true, .abbrev_len = 2 });
+    try expectPath("~/dev/projects/butaglyph/src/modules", long, "/home/u", .{ .collapse_home = true, .abbreviate = false });
     try expectPath("/u/l/s/doc/zig", "/usr/local/share/doc/zig", null, .{ .max_length = 0, .full_dirs = 2 });
 }
 
@@ -148,33 +160,43 @@ test "Windows paths keep their drive" {
     try expectPath("C:/", "C:/", null, .{ .max_length = 0 });
     try expectPath("C:/Windows", "C:/Windows", null, .{});
     try expectPath("//server/share/dir", "//server/share/dir", null, .{ .max_length = 0 });
-    try expectPath("~/d/src", "C:/Users/x/dev/src", "C:/Users/x", .{ .max_length = 0 });
+    try expectPath("~/d/src", "C:/Users/x/dev/src", "C:/Users/x", .{ .collapse_home = true, .max_length = 0 });
 }
 
 test "custom separator" {
-    try expectPath("~ ❯ dev ❯ butaglyph", "/home/u/dev/butaglyph", "/home/u", .{ .separator = " ❯ " });
-    try expectPath("~ • d • butaglyph", "/home/u/dev/butaglyph", "/home/u", .{ .separator = " • ", .max_length = 0 });
+    try expectPath("~ ❯ dev ❯ butaglyph", "/home/u/dev/butaglyph", "/home/u", .{ .collapse_home = true, .separator = " ❯ " });
+    try expectPath("~ • d • butaglyph", "/home/u/dev/butaglyph", "/home/u", .{ .collapse_home = true, .separator = " • ", .max_length = 0 });
     try expectPath("/usr  local  share", "/usr/local/share", null, .{ .separator = "  " });
     try expectPath("C:/Users  me", "C:/Users/me", null, .{ .separator = "  " });
     try expectPath("//srv/share/a  b", "//srv/share/a/b", null, .{ .separator = "  " });
-    try expectPath("~", "/home/u", "/home/u", .{ .separator = " ❯ " });
+    try expectPath("~", "/home/u", "/home/u", .{ .collapse_home = true, .separator = " ❯ " });
 }
 
 test "max_length = 0 always abbreviates" {
-    try expectPath("~/d/src", "/home/u/dev/src", "/home/u", .{ .max_length = 0 });
-    try expectPath("~", "/home/u", "/home/u", .{ .max_length = 0 });
+    try expectPath("~/d/src", "/home/u/dev/src", "/home/u", .{ .collapse_home = true, .max_length = 0 });
+    try expectPath("~", "/home/u", "/home/u", .{ .collapse_home = true, .max_length = 0 });
     try expectPath("/", "/", null, .{ .max_length = 0 });
     try expectPath("/etc", "/etc", null, .{ .max_length = 0 });
 }
 
 test "hidden directories keep their dot" {
-    try expectPath("~/.c/n/lua", "/home/u/.config/nvim/lua", "/home/u", .{ .max_length = 0 });
+    try expectPath("~/.c/n/lua", "/home/u/.config/nvim/lua", "/home/u", .{ .collapse_home = true, .max_length = 0 });
 }
 
 test "abbreviation is UTF-8 aware" {
     // Azerbaijani: Şəkillər (pictures), Sənədlər (documents)
-    try expectPath("~/Ş/S/son", "/home/u/Şəkillər/Sənədlər/son", "/home/u", .{ .max_length = 0 });
-    try expectPath("~/Şə/Sə/son", "/home/u/Şəkillər/Sənədlər/son", "/home/u", .{ .max_length = 0, .abbrev_len = 2 });
+    try expectPath("~/Ş/S/son", "/home/u/Şəkillər/Sənədlər/son", "/home/u", .{ .collapse_home = true, .max_length = 0 });
+    try expectPath("~/Şə/Sə/son", "/home/u/Şəkillər/Sənədlər/son", "/home/u", .{ .collapse_home = true, .max_length = 0, .abbrev_len = 2 });
     // Length is measured in code points, not bytes: 19 code points, 25 bytes.
-    try expectPath("~/Şəkillər/Sənədlər", "/home/u/Şəkillər/Sənədlər", "/home/u", .{ .max_length = 19 });
+    try expectPath("~/Şəkillər/Sənədlər", "/home/u/Şəkillər/Sənədlər", "/home/u", .{ .collapse_home = true, .max_length = 19 });
+}
+
+test "the home directory is shown as a path, and never abbreviated" {
+    try expectPath("/home/u", "/home/u", "/home/u", .{});
+    try expectPath("/home/u/src", "/home/u/src", "/home/u", .{});
+    try expectPath("/home/u/d/p/b/s/modules", "/home/u/dev/projects/butaglyph/src/modules", "/home/u", .{});
+    try expectPath("/home/u ❯ dev ❯ butaglyph", "/home/u/dev/butaglyph", "/home/u", .{ .separator = " ❯ " });
+    try expectPath("/home/u", "/home/u", "/home/u", .{ .separator = " ❯ ", .max_length = 0 });
+    try expectPath("C:/Users/x/d/src", "C:/Users/x/dev/src", "C:/Users/x", .{ .max_length = 0 });
+    try expectPath("/home/user2", "/home/user2", "/home/u", .{});
 }

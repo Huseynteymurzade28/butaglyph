@@ -70,6 +70,7 @@ config never costs you the prompt.
     // Style flags: bold, dim, italic, underline. Background: .bg.
     .dir = .{
         .style = .{ .fg = "#7aa2f7", .bold = true },
+        .collapse_home = false, // true: ~/dev instead of /home/me/dev
         .home_symbol = "~",
         .max_length = 24, // abbreviate once longer than this (0 = always)
         .abbrev_len = 1,  // ~/d/b/src: characters kept per directory
@@ -166,7 +167,7 @@ powerline chevron, with a Nerd Font). The root of an absolute path stays
 
 | Module       | Shows                                                         | Main options |
 |--------------|---------------------------------------------------------------|--------------|
-| `dir`        | Working directory, `$HOME` as `~`, fish-style abbreviation of long paths (UTF-8 aware). Windows drives and UNC roots are kept whole | `home_symbol`, `separator`, `abbreviate`, `max_length`, `abbrev_len`, `full_dirs` |
+| `dir`        | Working directory, with fish-style abbreviation of long paths (UTF-8 aware). Your home directory is shown whole (`/home/me/d/b/src`), or as `~` with `collapse_home`. Windows drives and UNC roots are kept whole | `collapse_home`, `home_symbol`, `separator`, `abbreviate`, `max_length`, `abbrev_len`, `full_dirs` |
 | `git_branch` | Branch from `.git/HEAD`, or the short hash when HEAD is detached. Works in subdirectories, worktrees and submodules (`.git` files with `gitdir:`) | `symbol`, `detached_symbol`, `hash_length`, `max_length`, `timeout_ms` |
 | `git_status` | Conflicted (`=`), staged (`+`), modified (`!`), deleted (`✘`) and untracked (`?`) paths, and commits ahead of (`⇡`) and behind (`⇣`) the upstream. Hidden when the tree is clean and in sync | `*_symbol`, `show_counts`, `untracked`, `ahead_behind`, `worktree`, `timeout_ms` |
 | `status`     | The last exit code, if non-zero. `130` is shown as `INT`, and so on | `symbol`, `signal_names` |
@@ -183,6 +184,8 @@ powerline chevron, with a Nerd Font). The root of an absolute path stays
 | `aws`        | The AWS profile and region set in this shell                  | `symbol`, `show_region`, `timeout_ms` |
 | `docker_context` | The Docker context, unless it is `default`. Not in the default order | `symbol`, `timeout_ms` |
 | `kubernetes` | The Kubernetes context and its namespace. Not in the default order | `symbol`, `show_namespace`, `timeout_ms` |
+| `os`         | Your distribution's logo with `.glyphs = .nerd` (Arch, Debian, Fedora, NixOS, Ubuntu, macOS, Windows and more; Arch-based systems get Arch's), its name otherwise. Not in the default order | `symbol`, `show_name` |
+| `user`       | `user@host`, in `root_style` for root. Not in the default order | `show_user`, `show_host`, `separator`, `ssh_only`, `root_style` |
 
 Every module except `line_break` and `text` has a `style` (or
 `success_style`/`failure_style`) and a `symbol` override; leaving `symbol`

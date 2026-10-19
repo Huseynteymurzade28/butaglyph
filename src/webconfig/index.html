@@ -358,6 +358,8 @@ const MODULES = {
   aws: ["AWS", "profile and region set in this shell"],
   docker_context: ["Docker context", "unless it is `default`"],
   kubernetes: ["Kubernetes", "context and namespace"],
+  os: ["Operating system", "your distribution's logo (Nerd Font) or name"],
+  user: ["User and host", "me@laptop, red for root"],
   duration: ["Duration", "of the last command, when it was slow"],
   status: ["Exit status", "of the last command, when it failed"],
   jobs: ["Background jobs", "how many are running"],
@@ -394,6 +396,12 @@ const HELP = {
   show_namespace: "Show the Kubernetes namespace.",
   symbol: "Leave unset to use the glyph set's symbol.",
   pieces: "Each piece has its own text and style.",
+  collapse_home: "Show your home directory as ~ instead of its path.",
+  show_name: "The name after the logo: Arch Linux.",
+  root_style: "Used instead of style when you are root.",
+  ssh_only: "Only show it in an SSH session.",
+  show_user: "The user name.",
+  show_host: "The host name.",
 };
 // Which glyph a symbol field defaults to.
 function glyphFor(mod, field) {

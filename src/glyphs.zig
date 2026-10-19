@@ -27,6 +27,8 @@ pub const Glyphs = struct {
     docker: []const u8,
     kubernetes: []const u8,
     aws: []const u8,
+    /// Whether the `os` module can draw distribution logos (Nerd Font).
+    logos: bool = false,
 };
 
 /// The default: standard Unicode only, no Private Use Area. A terminal
@@ -82,6 +84,7 @@ pub const nerd: Glyphs = .{
     .docker = "\u{f308} ", // nf-linux-docker
     .kubernetes = "\u{2388} ", // ⎈ (helm)
     .aws = "\u{e33d} ", // nf-dev-aws
+    .logos = true,
 };
 
 /// Pure 7-bit ASCII for terminals or fonts without extra glyphs.
@@ -119,9 +122,9 @@ pub fn get(set: Set) *const Glyphs {
 }
 
 test "ascii set is 7-bit clean" {
-    inline for (@typeInfo(Glyphs).@"struct".fields) |f| {
+    inline for (@typeInfo(Glyphs).@"struct".fields) |f| if (f.type == []const u8) {
         for (@field(ascii, f.name)) |c| try @import("std").testing.expect(c < 0x80);
-    }
+    };
 }
 
 /// U+E000-U+F8FF and the supplementary private use planes: code points no
@@ -136,8 +139,8 @@ pub fn hasPrivateUse(s: []const u8) bool {
 }
 
 test "unicode set needs no special font" {
-    inline for (@typeInfo(Glyphs).@"struct".fields) |f| {
+    inline for (@typeInfo(Glyphs).@"struct".fields) |f| if (f.type == []const u8) {
         try @import("std").testing.expect(!hasPrivateUse(@field(unicode, f.name)));
-    }
+    };
     try @import("std").testing.expect(hasPrivateUse(nerd.git_branch));
 }

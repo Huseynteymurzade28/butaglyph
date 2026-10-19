@@ -48,6 +48,8 @@ pub const Config = struct {
     docker_context: m.docker_context.Config = .{},
     kubernetes: m.kubernetes.Config = .{},
     aws: m.aws.Config = .{},
+    os: m.os.Config = .{},
+    user: m.user.Config = .{},
 };
 
 pub const DaemonMode = enum { auto, manual, off };

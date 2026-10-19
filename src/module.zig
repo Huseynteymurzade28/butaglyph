@@ -54,6 +54,8 @@ pub const Id = enum {
     docker_context,
     kubernetes,
     aws,
+    os,
+    user,
 };
 
 /// How expensive `compute` is.
@@ -107,6 +109,8 @@ pub const impls = struct {
     pub const docker_context = @import("modules/docker_context.zig");
     pub const kubernetes = @import("modules/kubernetes.zig");
     pub const aws = @import("modules/aws.zig");
+    pub const os = @import("modules/os.zig");
+    pub const user = @import("modules/user.zig");
 };
 
 pub fn Impl(comptime id: Id) type {
@@ -131,6 +135,8 @@ pub const Data = union(Id) {
     docker_context: impls.docker_context.Data,
     kubernetes: impls.kubernetes.Data,
     aws: impls.aws.Data,
+    os: impls.os.Data,
+    user: impls.user.Data,
 };
 
 pub const id_count = @typeInfo(Id).@"enum".fields.len;
