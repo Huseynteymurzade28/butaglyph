@@ -1,0 +1,1046 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>buta config</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext x='4' y='26' font-size='26' fill='%23e6a532'%3E%E2%9D%A7%3C/text%3E%3C/svg%3E">
+<style>
+:root {
+  --base: #1e1e2e; --mantle: #181825; --crust: #11111b;
+  --s0: #313244; --s1: #45475a; --s2: #585b70;
+  --o0: #6c7086; --o1: #7f849c; --sub: #a6adc8; --text: #cdd6f4;
+  --red: #f38ba8; --green: #a6e3a1; --yellow: #f9e2af; --blue: #89b4fa;
+  --mauve: #cba6f7; --teal: #94e2d5; --peach: #fab387;
+  --madder: #b8323b; --saffron: #e6a532; --indigo: #24306e; --ivory: #f8ecd4;
+  --accent: linear-gradient(90deg, #7a1424, #b8323b 40%, #e6a532);
+  --radius: 10px;
+  --mono: "JetBrainsMono Nerd Font", "JetBrains Mono", "Symbols Nerd Font", "DejaVu Sans Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --ui: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--crust); color: var(--text); font: 14px/1.45 var(--ui); }
+button, input, select, textarea { font: inherit; color: inherit; }
+a { color: var(--blue); }
+
+/* ---------- header ---------- */
+header {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 14px; padding: 10px 18px;
+  background: rgba(17,17,27,.92); backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--s0);
+}
+.logo { display: flex; align-items: baseline; gap: 8px; font-weight: 700; font-size: 17px; letter-spacing: .2px; white-space: nowrap; }
+.logo .buta { font-size: 22px; background: var(--accent); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.logo small { font-weight: 500; color: var(--o1); font-size: 13px; }
+.path { color: var(--o1); font: 12px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.chip { padding: 3px 10px; border-radius: 99px; font-size: 12px; background: var(--s0); color: var(--sub); white-space: nowrap; }
+.chip.dirty { background: rgba(249,226,175,.15); color: var(--yellow); }
+.chip.saved { background: rgba(166,227,161,.15); color: var(--green); }
+.btn {
+  border: 1px solid var(--s1); background: var(--s0); border-radius: 8px; padding: 6px 12px; cursor: pointer;
+  transition: background .12s, border-color .12s, transform .05s; white-space: nowrap;
+}
+.btn:hover { background: var(--s1); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.primary { background: var(--accent); border-color: transparent; color: #fff; font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.12); }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--sub); }
+.btn.ghost:hover { background: var(--s0); color: var(--text); }
+.btn.small { padding: 3px 8px; font-size: 12px; }
+.btn.danger:hover { background: rgba(243,139,168,.2); border-color: var(--red); }
+
+/* ---------- layout ---------- */
+.app { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: calc(100vh - 53px); }
+nav { border-right: 1px solid var(--s0); padding: 14px 10px; position: sticky; top: 53px; height: calc(100vh - 53px); overflow: auto; background: var(--mantle); }
+nav h4 { margin: 14px 10px 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--o0); }
+nav a { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 7px; color: var(--sub); text-decoration: none; cursor: pointer; }
+nav a:hover { background: var(--s0); color: var(--text); }
+nav a.active { background: var(--s0); color: var(--text); box-shadow: inset 3px 0 0 var(--saffron); }
+nav a .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--s2); flex: none; }
+nav a .dot.on { background: var(--green); }
+main { padding: 0 24px 80px; min-width: 0; }
+
+/* ---------- preview ---------- */
+.preview-wrap { position: sticky; top: 53px; z-index: 10; padding: 16px 0 12px; background: linear-gradient(var(--crust) 85%, transparent); }
+.terminal { border-radius: 12px; background: var(--term-bg, #1e1e2e); box-shadow: 0 14px 40px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.06); overflow: hidden; }
+.term-bar { display: flex; align-items: center; gap: 7px; padding: 8px 12px; background: rgba(0,0,0,.25); font-size: 12px; color: var(--o1); }
+.term-bar .d { width: 11px; height: 11px; border-radius: 50%; }
+.term-bar .title { flex: 1; text-align: center; margin-right: 50px; font-weight: 600; }
+.term-bar select, .term-bar input { background: var(--s0); border: 1px solid var(--s1); border-radius: 6px; padding: 1px 6px; font-size: 12px; }
+.term-body { padding: 12px 16px 14px; font-family: var(--preview-font, var(--mono)); font-size: var(--preview-size, 15px); line-height: 1.4; color: #cdd6f4; overflow-x: auto; }
+.term-body .row { white-space: pre; min-height: 1.4em; }
+.term-body .label { font: 11px var(--ui); color: var(--o0); margin: 6px 0 2px; letter-spacing: .3px; }
+.term-body .label:first-child { margin-top: 0; }
+.cursor { display: inline-block; width: .6em; height: 1.15em; vertical-align: text-bottom; background: #cdd6f4; animation: blink 1.1s steps(1) infinite; }
+.cmd { color: #cdd6f4; }
+@keyframes blink { 50% { opacity: 0; } }
+.ansi-blink { animation: blink 1s steps(1) infinite; }
+.stderr { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: rgba(243,139,168,.12); color: var(--red); font: 12px var(--mono); white-space: pre-wrap; }
+.preview-controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-top: 10px; font-size: 12px; color: var(--sub); }
+.preview-controls label { display: flex; align-items: center; gap: 6px; }
+.preview-controls input[type=text] { width: 220px; }
+.preview-controls input { background: var(--s0); border: 1px solid var(--s1); border-radius: 6px; padding: 3px 7px; font-size: 12px; }
+.preview-controls input[type=number] { width: 70px; }
+
+/* ---------- sections ---------- */
+section { margin-top: 26px; scroll-margin-top: 300px; }
+section > h2 { font-size: 20px; margin: 0 0 4px; display: flex; align-items: center; gap: 10px; }
+section > h2 .sym { font: 18px var(--mono); color: var(--saffron); }
+section > p.lead { margin: 0 0 14px; color: var(--sub); max-width: 760px; }
+.card { background: var(--base); border: 1px solid var(--s0); border-radius: var(--radius); padding: 16px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.field { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 6px 14px; align-items: start; padding: 9px 0; border-top: 1px solid rgba(69,71,90,.5); }
+.field:first-child { border-top: 0; }
+.field > .name { padding-top: 5px; }
+.field > .name code { font: 600 13px var(--mono); color: var(--text); }
+.field > .name .help { display: block; font-size: 12px; color: var(--o1); margin-top: 2px; }
+.field.changed > .name code::after { content: " •"; color: var(--saffron); }
+.input, input[type=text].input, input[type=number].input, select.input, textarea.input {
+  background: var(--mantle); border: 1px solid var(--s1); border-radius: 7px; padding: 6px 9px; width: 100%; max-width: 420px;
+}
+.input:focus, textarea:focus, select:focus { outline: 2px solid rgba(230,165,50,.5); outline-offset: 0; border-color: var(--saffron); }
+input.mono, .mono { font-family: var(--mono); }
+.row-flex { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.muted { color: var(--o1); font-size: 12px; }
+fieldset { border: 1px solid var(--s0); border-radius: 9px; padding: 4px 12px 8px; margin: 0; min-width: 0; }
+fieldset legend { padding: 0 6px; color: var(--o1); font: 12px var(--mono); }
+
+/* toggles */
+.switch { position: relative; width: 38px; height: 22px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch span { position: absolute; inset: 0; background: var(--s1); border-radius: 99px; cursor: pointer; transition: .15s; }
+.switch span::before { content: ""; position: absolute; width: 16px; height: 16px; left: 3px; top: 3px; border-radius: 50%; background: var(--text); transition: .15s; }
+.switch input:checked + span { background: var(--madder); }
+.switch input:checked + span::before { transform: translateX(16px); }
+
+/* ---------- presets ---------- */
+.presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+.preset { background: var(--base); border: 1px solid var(--s0); border-radius: var(--radius); overflow: hidden; cursor: pointer; transition: transform .12s, border-color .12s, box-shadow .12s; }
+.preset:hover { transform: translateY(-2px); border-color: var(--s2); box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+.preset.current { border-color: var(--saffron); }
+.preset .mini { background: #1e1e2e; padding: 10px 12px; font-family: var(--preview-font, var(--mono)); font-size: 12px; line-height: 1.35; overflow: hidden; min-height: 62px; }
+.preset .mini .row { white-space: pre; }
+.preset .meta { padding: 8px 12px 10px; border-top: 1px solid var(--s0); }
+.preset .meta b { font-family: var(--mono); }
+.preset .meta div { color: var(--o1); font-size: 12px; }
+
+/* ---------- order ---------- */
+.order { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px; min-height: 56px; background: var(--mantle); border: 1px dashed var(--s1); border-radius: var(--radius); }
+.mod-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 6px 5px 10px; border-radius: 8px; background: var(--s0);
+  border: 1px solid var(--s1); font: 13px var(--mono); cursor: grab; user-select: none;
+}
+.mod-chip.lb { background: transparent; border-style: dashed; color: var(--o1); }
+.mod-chip.text { border-color: var(--saffron); }
+.mod-chip .x { border: 0; background: none; color: var(--o1); cursor: pointer; padding: 0 4px; border-radius: 5px; font-size: 14px; line-height: 1; }
+.mod-chip .x:hover { color: var(--red); background: rgba(243,139,168,.15); }
+.mod-chip.dragging { opacity: .35; }
+.mod-chip.drop-before { box-shadow: -3px 0 0 var(--saffron); }
+.mod-chip.drop-after { box-shadow: 3px 0 0 var(--saffron); }
+.break { flex-basis: 100%; height: 0; }
+.palette { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.palette button { font: 12px var(--mono); }
+
+/* ---------- shapes ---------- */
+.shapes { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.shape { border: 1px solid var(--s1); border-radius: 9px; padding: 8px 10px; cursor: pointer; background: var(--mantle); }
+.shape:hover { border-color: var(--s2); }
+.shape.current { border-color: var(--saffron); background: rgba(230,165,50,.08); }
+.shape .demo { font: 16px var(--preview-font, var(--mono)); white-space: pre; height: 22px; overflow: hidden; }
+.shape .n { font-size: 12px; color: var(--sub); display: flex; justify-content: space-between; }
+.shape .n i { color: var(--peach); font-style: normal; font-size: 11px; }
+
+/* ---------- style editor ---------- */
+.style-ed { display: grid; gap: 8px; max-width: 640px; }
+.style-ed .sample { font: 15px var(--preview-font, var(--mono)); padding: 6px 10px; white-space: pre; display: inline-block; }
+.style-ed .sample-wrap { display: inline-block; border-radius: 7px; background-color: #1e1e2e; box-shadow: 0 0 0 1px var(--s0); }
+.paint { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.paint .lbl { width: 26px; color: var(--o1); font: 12px var(--mono); }
+.seg { display: inline-flex; border: 1px solid var(--s1); border-radius: 7px; overflow: hidden; }
+.seg button { border: 0; background: var(--mantle); padding: 4px 9px; cursor: pointer; font-size: 12px; color: var(--sub); }
+.seg button + button { border-left: 1px solid var(--s1); }
+.seg button.on { background: var(--s1); color: var(--text); }
+.stop { display: inline-flex; align-items: center; gap: 3px; background: var(--mantle); border: 1px solid var(--s1); border-radius: 7px; padding: 2px 4px; }
+.stop input[type=color] { width: 26px; height: 22px; border: 0; padding: 0; background: none; cursor: pointer; }
+.stop input[type=text] { width: 92px; border: 0; background: none; font: 12px var(--mono); padding: 2px; }
+.stop .x { border: 0; background: none; color: var(--o1); cursor: pointer; padding: 0 3px; }
+.flags { display: flex; flex-wrap: wrap; gap: 4px; }
+.flags button { border: 1px solid var(--s1); background: var(--mantle); border-radius: 6px; padding: 2px 8px; cursor: pointer; font-size: 12px; color: var(--sub); }
+.flags button.on { background: var(--s1); color: var(--text); border-color: var(--s2); }
+.gradbar { height: 6px; border-radius: 3px; width: 140px; }
+.swatches { display: flex; gap: 3px; flex-wrap: wrap; }
+.swatches button { width: 18px; height: 18px; border-radius: 4px; border: 1px solid rgba(255,255,255,.15); cursor: pointer; padding: 0; }
+
+/* ---------- lists ---------- */
+.tags { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; background: var(--mantle); border: 1px solid var(--s1); border-radius: 7px; padding: 5px; max-width: 520px; }
+.tag { display: inline-flex; align-items: center; gap: 3px; background: var(--s0); border-radius: 5px; padding: 1px 3px 1px 7px; font: 12px var(--mono); }
+.tag button { border: 0; background: none; color: var(--o1); cursor: pointer; }
+.tags input { border: 0; background: none; outline: none; min-width: 120px; flex: 1; font: 12px var(--mono); padding: 2px; }
+.piece { border: 1px solid var(--s0); border-radius: 9px; padding: 8px 10px; margin-bottom: 8px; background: var(--mantle); }
+.piece-head { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+
+.module-card { margin-bottom: 14px; }
+.module-card > .head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.module-card > .head h3 { margin: 0; font: 600 16px var(--mono); }
+.module-card > .head .desc { color: var(--o1); flex: 1; }
+.badge { font-size: 11px; padding: 2px 8px; border-radius: 99px; background: var(--s0); color: var(--o1); }
+.badge.on { background: rgba(166,227,161,.14); color: var(--green); }
+details.more > summary { cursor: pointer; color: var(--sub); padding: 6px 0; font-size: 13px; }
+
+textarea.zon { width: 100%; min-height: 360px; font: 13px/1.5 var(--mono); background: var(--mantle); border: 1px solid var(--s1); border-radius: var(--radius); padding: 12px; resize: vertical; tab-size: 4; }
+.banner { margin: 14px 0 0; padding: 10px 14px; border-radius: 9px; background: rgba(249,226,175,.1); border: 1px solid rgba(249,226,175,.3); color: var(--yellow); }
+.banner.err { background: rgba(243,139,168,.1); border-color: rgba(243,139,168,.35); color: var(--red); }
+.toast { position: fixed; right: 18px; bottom: 18px; z-index: 50; max-width: 460px; padding: 12px 16px; border-radius: 10px; background: var(--s0); border: 1px solid var(--s1); box-shadow: 0 10px 30px rgba(0,0,0,.5); transform: translateY(20px); opacity: 0; transition: .2s; pointer-events: none; }
+.toast.show { transform: none; opacity: 1; }
+.toast b { color: var(--green); }
+.kbd { font: 11px var(--mono); padding: 1px 5px; border: 1px solid var(--s1); border-bottom-width: 2px; border-radius: 4px; color: var(--sub); }
+.overlay { position: fixed; inset: 0; z-index: 100; display: none; place-items: center; background: rgba(17,17,27,.85); backdrop-filter: blur(4px); text-align: center; }
+.overlay.show { display: grid; }
+.overlay .big { font-size: 64px; background: var(--accent); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+@media (max-width: 860px) {
+  .app { grid-template-columns: 1fr; }
+  nav { display: none; }
+  main { padding: 0 16px 60px; }
+  .field { grid-template-columns: 1fr; }
+  .path { display: none; }
+  .preview-wrap { position: static; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"><span class="buta">❧</span>butaglyph <small>config</small></div>
+  <div class="path" id="path"></div>
+  <span class="chip" id="status">loading…</span>
+  <button class="btn ghost" id="undo" title="Undo (Ctrl+Z)">↶</button>
+  <button class="btn ghost" id="redo" title="Redo (Ctrl+Shift+Z)">↷</button>
+  <button class="btn" id="revert" title="Discard changes and reload the file">Revert</button>
+  <button class="btn primary" id="save" title="Save (Ctrl+S)">Save</button>
+  <button class="btn ghost" id="done" title="Stop buta config">Done</button>
+</header>
+
+<div class="app">
+  <nav id="nav"></nav>
+  <main>
+    <div class="preview-wrap">
+      <div class="terminal">
+        <div class="term-bar">
+          <span class="d" style="background:#f38ba8"></span><span class="d" style="background:#f9e2af"></span><span class="d" style="background:#a6e3a1"></span>
+          <span class="title" id="term-title">preview</span>
+        </div>
+        <div class="term-body" id="preview"></div>
+      </div>
+      <div class="preview-controls">
+        <label>directory <input type="text" id="pv-cwd" class="mono" spellcheck="false"></label>
+        <label>status <input type="number" id="pv-status" value="1"></label>
+        <label>took (ms) <input type="number" id="pv-duration" value="3200" min="0"></label>
+        <label>jobs <input type="number" id="pv-jobs" value="1" min="0"></label>
+        <label>font <input type="text" id="pv-font" placeholder="your terminal font" spellcheck="false"></label>
+        <label>size <input type="number" id="pv-size" value="15" min="9" max="28"></label>
+      </div>
+      <div id="banners"></div>
+    </div>
+    <div id="sections"></div>
+  </main>
+</div>
+<div class="toast" id="toast"></div>
+<div class="overlay" id="bye"><div><div class="big">❧</div><h2>buta config has stopped</h2><p class="muted">You can close this tab. Run <code>buta config</code> to come back.</p></div></div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------------------
+// Talking to buta
+
+const TOKEN = location.hash.slice(1);
+async function api(path, body) {
+  const opts = { headers: { "x-buta-token": TOKEN } };
+  if (body !== undefined) {
+    opts.method = "POST";
+    opts.headers["content-type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+  let res;
+  try { res = await fetch(path, opts); } catch (e) { serverGone(); throw e; }
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error || res.statusText);
+  return json;
+}
+function serverGone() { document.getElementById("bye").classList.add("show"); }
+
+// ---------------------------------------------------------------------------
+// Terminal output: ANSI SGR to HTML
+
+const PALETTE = ["#45475a", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7", "#94e2d5", "#bac2de",
+                 "#585b70", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7", "#94e2d5", "#a6adc8"];
+const TERM_FG = "#cdd6f4", TERM_BG = "#1e1e2e";
+function xterm256(n) {
+  if (n < 16) return PALETTE[n];
+  if (n < 232) { n -= 16; const s = [0, 95, 135, 175, 215, 255]; return rgb(s[Math.floor(n / 36)], s[Math.floor(n / 6) % 6], s[n % 6]); }
+  const v = 8 + 10 * (n - 232); return rgb(v, v, v);
+}
+function rgb(r, g, b) { return "#" + [r, g, b].map(x => x.toString(16).padStart(2, "0")).join(""); }
+const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function ansiToHtml(text) {
+  const lines = [];
+  let st = {};
+  for (const line of text.split("\n")) {
+    let html = "";
+    const re = /\x1b\[([0-9;]*)m/g;
+    let pos = 0, m;
+    while ((m = re.exec(line))) {
+      if (m.index > pos) html += span(st, line.slice(pos, m.index));
+      st = applySgr(st, m[1]);
+      pos = re.lastIndex;
+    }
+    if (pos < line.length) html += span(st, line.slice(pos));
+    lines.push(html);
+  }
+  return lines;
+}
+function applySgr(st, params) {
+  st = { ...st };
+  const p = params === "" ? [0] : params.split(";").map(Number);
+  for (let i = 0; i < p.length; i++) {
+    const c = p[i];
+    if (c === 0) st = {};
+    else if (c === 1) st.bold = true; else if (c === 2) st.dim = true; else if (c === 3) st.italic = true;
+    else if (c === 4) st.underline = true; else if (c === 5) st.blink = true; else if (c === 7) st.inverse = true;
+    else if (c === 9) st.strike = true;
+    else if (c === 22) { st.bold = st.dim = false; } else if (c === 23) st.italic = false; else if (c === 24) st.underline = false;
+    else if (c === 25) st.blink = false; else if (c === 27) st.inverse = false; else if (c === 29) st.strike = false;
+    else if (c >= 30 && c <= 37) st.fg = PALETTE[c - 30]; else if (c >= 90 && c <= 97) st.fg = PALETTE[c - 82];
+    else if (c >= 40 && c <= 47) st.bg = PALETTE[c - 40]; else if (c >= 100 && c <= 107) st.bg = PALETTE[c - 92];
+    else if (c === 39) delete st.fg; else if (c === 49) delete st.bg;
+    else if (c === 38 || c === 48) {
+      const key = c === 38 ? "fg" : "bg";
+      if (p[i + 1] === 5) { st[key] = xterm256(p[i + 2]); i += 2; }
+      else if (p[i + 1] === 2) { st[key] = rgb(p[i + 2], p[i + 3], p[i + 4]); i += 4; }
+    }
+  }
+  return st;
+}
+function span(st, text) {
+  let fg = st.fg, bg = st.bg;
+  if (st.inverse) { const f = fg || TERM_FG; fg = bg || TERM_BG; bg = f; }
+  if (st.bold && !st.fg && !st.inverse) fg = "#ffffff";
+  const css = [];
+  if (fg) css.push("color:" + fg);
+  if (bg) css.push("background:" + bg);
+  if (st.bold) css.push("font-weight:700");
+  if (st.dim) css.push("opacity:.6");
+  if (st.italic) css.push("font-style:italic");
+  const deco = [st.underline && "underline", st.strike && "line-through"].filter(Boolean);
+  if (deco.length) css.push("text-decoration:" + deco.join(" "));
+  const cls = st.blink ? ' class="ansi-blink"' : "";
+  return css.length || cls ? `<span${cls} style="${css.join(";")}">${esc(text)}</span>` : esc(text);
+}
+function renderPrompt(ansi, command) {
+  const lines = ansiToHtml(ansi);
+  return lines.map((l, i) => `<div class="row">${l}${i === lines.length - 1 ? (command ? `<span class="cmd">${esc(command)}</span>` : '<span class="cursor"></span>') : ""}</div>`).join("");
+}
+
+// ---------------------------------------------------------------------------
+// What the modules are, for people
+
+const MODULES = {
+  dir: ["Working directory", "~ for home, long paths abbreviated fish-style"],
+  git_branch: ["Git branch", "or the commit on a detached HEAD"],
+  git_status: ["Git status", "staged, modified, untracked, ahead and behind"],
+  python: ["Python", "version and virtual environment, in Python projects"],
+  node: ["Node.js", "version, in JavaScript projects"],
+  rust: ["Rust", "the active toolchain's version, in Cargo projects"],
+  go: ["Go", "version, in Go modules"],
+  zig: ["Zig", "version, in Zig projects"],
+  aws: ["AWS", "profile and region set in this shell"],
+  docker_context: ["Docker context", "unless it is `default`"],
+  kubernetes: ["Kubernetes", "context and namespace"],
+  duration: ["Duration", "of the last command, when it was slow"],
+  status: ["Exit status", "of the last command, when it failed"],
+  jobs: ["Background jobs", "how many are running"],
+  character: ["Prompt symbol", "green after success, red after failure"],
+  line_break: ["Line break", "start a new line"],
+  text: ["Ornament", "fixed pieces of styled text"],
+};
+const HELP = {
+  glyphs: "Which symbols modules use by default. unicode works with any font; nerd needs a Nerd Font.",
+  separator: "Between two modules on the same line (when not drawn as segments).",
+  timeout_ms: "Slow modules (git, languages) are left out of a prompt that would take longer than this.",
+  daemon: "The cache daemon that keeps git fast in big repositories (Linux and macOS).",
+  home_symbol: "Shown instead of your home directory.",
+  abbreviate: "Shorten the directories in long paths to their first letters.",
+  max_length: "Abbreviate (or cut) only beyond this many characters. 0: always.",
+  abbrev_len: "Characters kept from each abbreviated directory.",
+  full_dirs: "Trailing directories that are never abbreviated.",
+  hash_length: "Hex digits of the commit shown on a detached HEAD.",
+  truncation_symbol: "Ends a branch name that was cut.",
+  show_counts: "+3 instead of +.",
+  untracked: "Count untracked files (walks the work tree).",
+  ahead_behind: "Count commits ahead of and behind the upstream.",
+  worktree: "Look at the work tree for modified files.",
+  signal_names: "Show INT instead of 130, and so on.",
+  min_ms: "Commands faster than this are not shown.",
+  min: "Fewest jobs to show the module at all.",
+  count_from: "Show the number from this many jobs on.",
+  suffix: "Unstyled text after the symbol, before what you type.",
+  version_prefix: "Before the version: v1.2.3.",
+  detect: "Files that mark a project; the module only shows inside one.",
+  search_parents: "Also look in parent directories, up to your home.",
+  show_env: "Show the virtual or conda environment's name.",
+  show_region: "Show the AWS region.",
+  show_namespace: "Show the Kubernetes namespace.",
+  symbol: "Leave unset to use the glyph set's symbol.",
+  pieces: "Each piece has its own text and style.",
+};
+// Which glyph a symbol field defaults to.
+function glyphFor(mod, field) {
+  const g = state.glyphs[cfg.glyphs] || {};
+  if (field === "symbol") return g[{ docker_context: "docker" }[mod] || mod];
+  if (field === "detached_symbol") return g.git_detached;
+  if (mod === "character") return g[field === "success_symbol" ? "character_success" : "character_failure"];
+  if (mod === "git_status") return g["git_" + field.replace("_symbol", "")];
+  return undefined;
+}
+
+const SHAPES = [
+  { n: "half", open: "▐", join: "▌", close: "▌", note: "default" },
+  { n: "stairs", open: "▗▟", join: "▙▖", close: "▙▖" },
+  { n: "shade", open: "░▒▓", join: "▓▒░", close: "▓▒░" },
+  { n: "dither", open: "▗▞", join: "▞", close: "▚▖" },
+  { n: "equalizer", open: "▁▃▅▇", join: "▇▅▃▁", close: "▇▅▃▁" },
+  { n: "checker", open: "▚▞▚", join: "▞▚▞", close: "▚▞▚" },
+  { n: "snow", open: "⡀⣄⣶⣿", join: "⢾⡷", close: "⣿⡶⠦⠂" },
+  { n: "pills", open: "▐", join: null, close: "▌" },
+  { n: "flat", open: "", join: "", close: "" },
+  { n: "arrow", open: "", join: "", close: "", nerd: true },
+  { n: "round", open: "", join: "", close: "", nerd: true },
+  { n: "slant", open: "", join: "", close: "", nerd: true },
+  { n: "flame", open: "", join: "", close: "", nerd: true },
+  { n: "pixel", open: "", join: "", close: "", nerd: true },
+  { n: "bubbles", open: "", join: null, close: "", nerd: true },
+];
+const COLORS = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];
+const NAMED = Object.fromEntries([...COLORS.map((c, i) => [c, PALETTE[i]]), ...COLORS.map((c, i) => ["bright_" + c, PALETTE[i + 8]])]);
+const SWATCHES = ["#f38ba8", "#fab387", "#f9e2af", "#a6e3a1", "#94e2d5", "#89b4fa", "#cba6f7", "#f5c2e7", "#cdd6f4", "#1e1e2e",
+                  "#b8323b", "#e6a532", "#24306e", "#1f6f6a", "#f8ecd4", "#ff2a6d", "#05d9e8", "#39ff14", "#ff00ff", "#000000"];
+function cssColor(c) {
+  if (!c) return null;
+  if (/^#[0-9a-fA-F]{6}$/.test(c)) return c;
+  if (NAMED[c]) return NAMED[c];
+  if (/^\d+$/.test(c) && +c < 256) return xterm256(+c);
+  return null;
+}
+function cssPaint(spec) {
+  if (!spec) return null;
+  if (spec === "rainbow") return "linear-gradient(90deg,#ff0000,#ff8000,#ffff00,#00ff00,#00ffff,#0000ff,#8000ff,#ff00ff)";
+  const stops = spec.split(">").map(cssColor).filter(Boolean);
+  if (stops.length === 0) return null;
+  if (stops.length === 1) return stops[0];
+  return `linear-gradient(90deg,${stops.join(",")})`;
+}
+
+// ---------------------------------------------------------------------------
+// State
+
+let state = null;     // from /api/state
+let cfg = null;       // the config being edited (JSON form)
+let saved = "";       // JSON of the config as last loaded or saved
+const history = [], future = [];
+const $ = id => document.getElementById(id);
+
+function clone(x) { return JSON.parse(JSON.stringify(x)); }
+function isDirty() { return JSON.stringify(cfg) !== saved; }
+function getPath(obj, path) { return path.reduce((o, k) => (o == null ? undefined : o[k]), obj); }
+function setPath(obj, path, value) {
+  const last = path[path.length - 1];
+  const parent = getPath(obj, path.slice(0, -1));
+  parent[last] = value;
+}
+
+let historyTimer = null, lastSnapshot = null;
+function change(path, value, opts = {}) {
+  if (lastSnapshot === null) lastSnapshot = JSON.stringify(cfg);
+  setPath(cfg, path, value);
+  clearTimeout(historyTimer);
+  historyTimer = setTimeout(() => {
+    if (lastSnapshot !== JSON.stringify(cfg)) { history.push(lastSnapshot); future.length = 0; if (history.length > 200) history.shift(); }
+    lastSnapshot = null; updateButtons();
+  }, 400);
+  changed(opts.rerender);
+}
+function changed(rerender) {
+  updateStatus();
+  schedulePreview();
+  if (rerender) renderSections();
+  updateButtons();
+}
+function replaceConfig(next, recordHistory = true) {
+  if (recordHistory) { history.push(JSON.stringify(cfg)); future.length = 0; }
+  cfg = next;
+  renderSections();
+  changed(false);
+}
+function undo() {
+  clearTimeout(historyTimer);
+  if (lastSnapshot !== null && lastSnapshot !== JSON.stringify(cfg)) { history.push(lastSnapshot); lastSnapshot = null; }
+  if (!history.length) return;
+  future.push(JSON.stringify(cfg));
+  replaceConfig(JSON.parse(history.pop()), false);
+}
+function redo() {
+  if (!future.length) return;
+  history.push(JSON.stringify(cfg));
+  replaceConfig(JSON.parse(future.pop()), false);
+}
+function updateButtons() {
+  $("undo").disabled = !history.length && lastSnapshot === null;
+  $("redo").disabled = !future.length;
+  $("save").disabled = !isDirty();
+  $("revert").disabled = !isDirty();
+}
+function updateStatus(savedNow) {
+  const s = $("status");
+  if (savedNow) { s.textContent = "saved ✓"; s.className = "chip saved"; return; }
+  if (isDirty()) { s.textContent = "unsaved changes"; s.className = "chip dirty"; }
+  else { s.textContent = "in sync with your file"; s.className = "chip"; }
+}
+
+// ---------------------------------------------------------------------------
+// Preview
+
+let previewTimer = null, previewSeq = 0;
+function schedulePreview() { clearTimeout(previewTimer); previewTimer = setTimeout(preview, 90); }
+function runs() {
+  const status = +$("pv-status").value || 0;
+  const duration = Math.max(0, +$("pv-duration").value || 0);
+  const jobs = Math.max(0, +$("pv-jobs").value || 0);
+  return [
+    { status: 0, jobs: 0 },
+    { status: status || 1, duration_ms: duration, jobs },
+  ];
+}
+async function preview() {
+  const seq = ++previewSeq;
+  let res;
+  try { res = await api("/api/preview", { config: cfg, runs: runs(), cwd: $("pv-cwd").value }); }
+  catch (e) { return; }
+  if (seq !== previewSeq) return;
+  const [ok, bad] = res.runs;
+  const status = +$("pv-status").value || 1;
+  let html = `<div class="label">after a command that worked</div>${renderPrompt(ok.prompt, "git commit -m \"weave a new motif\"")}`;
+  html += `<div class="label">after a slow command that failed (exit ${status})</div>${renderPrompt(bad.prompt)}`;
+  const err = ok.stderr || bad.stderr;
+  if (err) html += `<div class="stderr">${esc(err)}</div>`;
+  $("preview").innerHTML = html;
+  const z = $("zon-out");
+  if (z && document.activeElement !== z && !zonEditing) z.value = res.zon;
+}
+
+// Mini previews of the presets, one request each, a few at a time.
+async function presetPreviews() {
+  const queue = state.presets.map((p, i) => [p, i]);
+  const worker = async () => {
+    while (queue.length) {
+      const [p, i] = queue.shift();
+      try {
+        const res = await api("/api/preview", { config: p.config, runs: [{ status: 1, duration_ms: 3200, jobs: 1 }], cwd: $("pv-cwd").value });
+        const el = document.querySelector(`[data-preset="${i}"] .mini`);
+        if (el) el.innerHTML = ansiToHtml(res.runs[0].prompt).map(l => `<div class="row">${l}</div>`).join("");
+      } catch (e) { /* the card keeps its placeholder */ }
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]);
+}
+
+// ---------------------------------------------------------------------------
+// Building the page
+
+function el(tag, attrs = {}, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === undefined || v === null || v === false) continue;
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (k === "html") e.innerHTML = v;
+    else if (v === true) e.setAttribute(k, "");
+    else e.setAttribute(k, v);
+  }
+  for (const c of children.flat()) if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(c));
+  return e;
+}
+
+const SECTIONS = [];
+function renderSections() {
+  const scroll = window.scrollY;
+  const root = $("sections");
+  root.innerHTML = "";
+  SECTIONS.length = 0;
+  root.append(presetSection(), layoutSection(), lookSection(), segmentSection(), ...moduleSections(), zonSection());
+  renderNav();
+  window.scrollTo(0, scroll);
+  if (presetsRendered) presetPreviewsFromCache();
+}
+function section(id, title, sym, lead, ...body) {
+  SECTIONS.push({ id, title, sym });
+  return el("section", { id }, el("h2", {}, el("span", { class: "sym" }, sym), title), lead ? el("p", { class: "lead", html: lead }) : null, ...body);
+}
+function renderNav() {
+  const nav = $("nav");
+  nav.innerHTML = "";
+  const groups = [["Start", ["presets"]], ["Prompt", ["layout", "look", "segments"]], ["Modules", Object.keys(MODULES).map(m => "m-" + m)], ["File", ["zon"]]];
+  for (const [g, ids] of groups) {
+    nav.append(el("h4", {}, g));
+    for (const id of ids) {
+      const s = SECTIONS.find(x => x.id === id);
+      if (!s) continue;
+      const mod = id.startsWith("m-") ? id.slice(2) : null;
+      const a = el("a", { "data-id": id, onclick: () => document.getElementById(id).scrollIntoView({ behavior: "smooth" }) },
+        mod ? el("span", { class: "dot" + (cfg.order.includes(mod) ? " on" : "") }) : null,
+        mod ? el("span", { class: "mono" }, mod) : s.title);
+      nav.append(a);
+    }
+  }
+  spy();
+}
+function spy() {
+  let current = SECTIONS[0] && SECTIONS[0].id;
+  for (const s of SECTIONS) {
+    const e = document.getElementById(s.id);
+    if (e && e.getBoundingClientRect().top < 320) current = s.id;
+  }
+  document.querySelectorAll("nav a").forEach(a => a.classList.toggle("active", a.dataset.id === current));
+}
+addEventListener("scroll", spy, { passive: true });
+
+// --- presets
+let presetsRendered = false;
+const presetCache = {};
+function presetSection() {
+  const grid = el("div", { class: "presets" });
+  state.presets.forEach((p, i) => {
+    const same = JSON.stringify(p.config) === JSON.stringify(cfg);
+    const card = el("div", { class: "preset" + (same ? " current" : ""), "data-preset": i, title: "Use " + p.name,
+      onclick: () => { replaceConfig(clone(p.config)); toast(`Loaded <b>${esc(p.name)}</b>. Save to make it yours.`); } },
+      el("div", { class: "mini", html: presetCache[i] || '<span class="muted">drawing…</span>' }),
+      el("div", { class: "meta" }, el("b", {}, p.name), el("div", {}, p.description)));
+    grid.append(card);
+  });
+  return section("presets", "Presets", "❧", "Start from one of the built-in looks, then make it your own below. Click one to load it; nothing is written until you save.", grid);
+}
+function presetPreviewsFromCache() {
+  document.querySelectorAll("[data-preset]").forEach(c => { const i = c.dataset.preset; if (presetCache[i]) c.querySelector(".mini").innerHTML = presetCache[i]; });
+}
+
+// --- order
+function layoutSection() {
+  const order = el("div", { class: "order", id: "order" });
+  let dragFrom = null;
+  cfg.order.forEach((id, i) => {
+    if (id === "line_break") order.append(el("div", { class: "break" }));
+    const chip = el("span", { class: "mod-chip" + (id === "line_break" ? " lb" : "") + (id === "text" ? " text" : ""), draggable: "true", title: (MODULES[id] || [id])[0] },
+      id === "line_break" ? "↵ line_break" : id,
+      el("button", { class: "x", title: "Remove", onclick: e => { e.stopPropagation(); const o = [...cfg.order]; o.splice(i, 1); change(["order"], o, { rerender: true }); } }, "×"));
+    chip.addEventListener("dragstart", e => { dragFrom = i; chip.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(i)); });
+    chip.addEventListener("dragend", () => chip.classList.remove("dragging"));
+    chip.addEventListener("dragover", e => {
+      e.preventDefault();
+      const r = chip.getBoundingClientRect(), after = e.clientX > r.left + r.width / 2;
+      chip.classList.toggle("drop-after", after); chip.classList.toggle("drop-before", !after);
+    });
+    chip.addEventListener("dragleave", () => chip.classList.remove("drop-after", "drop-before"));
+    chip.addEventListener("drop", e => {
+      e.preventDefault();
+      const from = dragFrom ?? +e.dataTransfer.getData("text/plain");
+      const r = chip.getBoundingClientRect(), after = e.clientX > r.left + r.width / 2;
+      const o = [...cfg.order];
+      const [moved] = o.splice(from, 1);
+      let to = i + (after ? 1 : 0);
+      if (from < to) to--;
+      o.splice(to, 0, moved);
+      change(["order"], o, { rerender: true });
+    });
+    order.append(chip);
+  });
+  const all = state.schema.fields.find(f => f.name === "order").type.child.values;
+  const palette = el("div", { class: "palette" });
+  for (const id of all) {
+    const repeatable = id === "line_break" || id === "text";
+    if (!repeatable && cfg.order.includes(id)) continue;
+    palette.append(el("button", { class: "btn small", title: (MODULES[id] || [id]).join(": "), onclick: () => change(["order"], [...cfg.order, id], { rerender: true }) }, "+ " + id));
+  }
+  return section("layout", "Layout", "☰",
+    "Which modules your prompt shows, in which order. Drag to reorder, × to remove; <code>line_break</code> starts a new line. Modules that have nothing to say (no git repository, no project) stay hidden by themselves.",
+    order, el("div", { class: "muted", style: "margin-top:12px" }, "Add a module:"), palette);
+}
+
+// --- global look
+function lookSection() {
+  const card = el("div", { class: "card" });
+  const fields = ["glyphs", "separator", "timeout_ms", "daemon"];
+  for (const name of fields) {
+    const f = state.schema.fields.find(x => x.name === name);
+    card.append(fieldRow(["" + name], f, cfg[name], state.defaults[name], null));
+  }
+  const g = state.glyphs[cfg.glyphs] || {};
+  const sample = ["git_branch", "git_staged", "git_modified", "git_untracked", "git_ahead", "git_behind", "status", "duration", "jobs", "character_success"].map(k => g[k]).join("  ");
+  card.append(el("div", { class: "field" }, el("div", { class: "name" }, el("code", {}, "symbols"), el("span", { class: "help" }, "of the selected glyph set")), el("div", { class: "mono", style: "font-family:var(--preview-font,var(--mono));font-size:16px;padding-top:4px" }, sample)));
+  return section("look", "Look", "✦", "Settings for the whole prompt.", card);
+}
+
+// --- segments
+function segmentSection() {
+  const on = cfg.segments !== null;
+  const body = el("div", { class: "card" });
+  const def = state.schema.fields.find(f => f.name === "segments").type.child;
+  body.append(el("div", { class: "row-flex", style: "margin-bottom:10px" },
+    toggle(on, v => change(["segments"], v ? { open: "▐", join: "▌", close: "▌", padding: " " } : null, { rerender: true })),
+    el("span", {}, on ? "Modules with a background color are drawn as joined segments." : "Off: modules are only separated by the separator.")));
+  if (on) {
+    const shapes = el("div", { class: "shapes" });
+    for (const s of SHAPES) {
+      const cur = cfg.segments.open === s.open && cfg.segments.join === s.join && cfg.segments.close === s.close;
+      const demo = el("div", { class: "demo" });
+      demo.innerHTML = shapeDemo(s);
+      shapes.append(el("div", { class: "shape" + (cur ? " current" : ""), onclick: () => change(["segments"], { ...cfg.segments, open: s.open, join: s.join, close: s.close }, { rerender: true }) },
+        demo, el("div", { class: "n" }, s.n, s.nerd ? el("i", {}, "Nerd Font") : s.note ? el("i", { style: "color:var(--o1)" }, s.note) : null)));
+    }
+    body.append(shapes, el("div", { style: "margin-top:12px" }));
+    for (const f of def.fields) body.append(fieldRow(["segments", f.name], f, cfg.segments[f.name], ({ open: "▐", join: "▌", close: "▌", padding: " " })[f.name], null));
+  }
+  return section("segments", "Segments", "▙▖", "Joins neighboring modules that have a background into one band, powerline style. The joints take their colors from the segments around them. The block shapes work with any font; the powerline ones need a Nerd Font.", body);
+}
+function shapeDemo(s) {
+  const a = "#b8323b", b = "#24306e", c = "#e6a532";
+  const seg = (bg, t) => `<span style="background:${bg};color:#f8ecd4"> ${t} </span>`;
+  const fg = (col, t, bg) => `<span style="color:${col}${bg ? ";background:" + bg : ""}">${esc(t)}</span>`;
+  if (s.join === null) return fg(a, s.open) + seg(a, "~") + fg(a, s.close) + " " + fg(b, s.open) + seg(b, "⎇") + fg(b, s.close);
+  return fg(a, s.open) + seg(a, "~") + fg(a, s.join, b) + seg(b, "⎇") + fg(b, s.join, c) + seg(c, "◷") + fg(c, s.close);
+}
+
+// --- modules
+function moduleSections() {
+  const ids = Object.keys(MODULES).filter(m => m !== "line_break");
+  return ids.map(id => {
+    const f = state.schema.fields.find(x => x.name === id);
+    if (!f) return el("div");
+    const inOrder = cfg.order.includes(id);
+    const card = el("div", { class: "card module-card" });
+    card.append(el("div", { class: "head" },
+      el("span", { class: "badge" + (inOrder ? " on" : "") }, inOrder ? "in your prompt" : "not shown"),
+      el("span", { class: "desc" }, MODULES[id][1]),
+      inOrder ? el("button", { class: "btn small danger", onclick: () => change(["order"], cfg.order.filter(x => x !== id), { rerender: true }) }, "Remove")
+              : el("button", { class: "btn small", onclick: () => change(["order"], insertNatural(id), { rerender: true }) }, "Add to prompt")));
+    const sub = f.type.fields;
+    const main = [], more = [];
+    for (const sf of sub) (["timeout_ms", "detect", "truncation_symbol", "hash_length", "abbrev_len", "full_dirs", "worktree", "count_from", "min"].includes(sf.name) ? more : main).push(sf);
+    for (const sf of main) card.append(fieldRow([id, sf.name], sf, cfg[id][sf.name], state.defaults[id][sf.name], id));
+    if (more.length) {
+      const det = el("details", { class: "more" }, el("summary", {}, "More options"));
+      for (const sf of more) det.append(fieldRow([id, sf.name], sf, cfg[id][sf.name], state.defaults[id][sf.name], id));
+      card.append(det);
+    }
+    return section("m-" + id, MODULES[id][0], "◆", null, card);
+  });
+}
+// Where a module goes when added: after its neighbors in the default order.
+function insertNatural(id) {
+  const o = [...cfg.order];
+  const d = state.defaults.order;
+  const at = d.indexOf(id);
+  if (at >= 0) {
+    for (let j = at - 1; j >= 0; j--) { const k = o.indexOf(d[j]); if (k >= 0) { o.splice(k + 1, 0, id); return o; } }
+  }
+  const lb = o.indexOf("line_break");
+  o.splice(lb >= 0 ? lb : o.length, 0, id);
+  return o;
+}
+
+// --- raw ZON
+let zonEditing = false;
+function zonSection() {
+  const ta = el("textarea", { class: "zon", id: "zon-out", spellcheck: "false", readonly: !zonEditing });
+  const msg = el("div", { class: "muted", id: "zon-msg", style: "margin-top:8px" });
+  const edit = el("button", { class: "btn", onclick: async () => {
+    if (!zonEditing) { zonEditing = true; ta.readOnly = false; ta.focus(); edit.textContent = "Apply"; msg.textContent = "Edit the ZON, then apply it to the editor."; return; }
+    try {
+      const r = await api("/api/parse", { zon: ta.value });
+      if (r.error) { msg.innerHTML = `<span style="color:var(--red)">${esc(r.error)}</span>`; return; }
+      zonEditing = false; ta.readOnly = true; edit.textContent = "Edit";
+      replaceConfig(r.config); msg.textContent = "Applied.";
+    } catch (e) { msg.textContent = e.message; }
+  } }, zonEditing ? "Apply" : "Edit");
+  return section("zon", "config.zon", "{ }", `What <b>Save</b> writes to <code>${esc(state.path)}</code>: only what differs from the defaults. Comments in your current file are not kept; the file as it was is saved next to it as <code>.bak</code> the first time.`,
+    ta, el("div", { class: "row-flex", style: "margin-top:8px" }, edit, el("button", { class: "btn ghost", onclick: () => { navigator.clipboard && navigator.clipboard.writeText(ta.value); toast("Copied."); } }, "Copy")), msg);
+}
+
+// ---------------------------------------------------------------------------
+// Field editors, from the schema
+
+function fieldRow(path, f, value, def, mod) {
+  const changedNow = JSON.stringify(value) !== JSON.stringify(def);
+  const name = f.name;
+  const help = HELP[name] || (name.endsWith("_style") || name === "style" ? "Colors and text style." : name.endsWith("_symbol") ? "Leave unset to use the glyph set's symbol." : null);
+  const reset = changedNow && def !== undefined ? el("button", { class: "btn ghost small", title: "Back to the default", onclick: () => change(path, clone(def), { rerender: true }) }, "reset") : null;
+  return el("div", { class: "field" + (changedNow ? " changed" : "") },
+    el("div", { class: "name" }, el("code", {}, name), help ? el("span", { class: "help" }, help) : null, reset),
+    editor(path, f.type, value, def, mod, name));
+}
+
+function editor(path, t, value, def, mod, name) {
+  switch (t.kind) {
+    case "bool": return toggle(value, v => change(path, v, { rerender: true }));
+    case "int": return el("input", { type: "number", class: "input", min: 0, max: t.max, value, oninput: e => { const v = Math.min(t.max, Math.max(0, parseInt(e.target.value || "0", 10))); change(path, v); } });
+    case "string": return textInput(value, v => change(path, v), name);
+    case "enum": {
+      const s = el("select", { class: "input", onchange: e => change(path, e.target.value, { rerender: true }) });
+      for (const v of t.values) s.append(el("option", { value: v, selected: v === value }, v));
+      return s;
+    }
+    case "optional": return optionalEditor(path, t, value, def, mod, name);
+    case "list": return listEditor(path, t, value, mod, name);
+    case "struct":
+      if (t.style) return styleEditor(path, value || {}, mod);
+      return structEditor(path, t, value, def, mod);
+  }
+  return el("span", { class: "muted" }, "(not editable here)");
+}
+
+function structEditor(path, t, value, def, mod) {
+  const fs = el("fieldset", {});
+  for (const f of t.fields) fs.append(fieldRow([...path, f.name], f, value[f.name], def ? def[f.name] : undefined, mod));
+  return fs;
+}
+
+function textInput(value, set, name) {
+  const visible = value.replace(/[-]/g, c => "\\u{" + c.codePointAt(0).toString(16) + "}");
+  const hint = el("span", { class: "muted" });
+  // Spaces matter here (padding, separators) but can't be seen in a field.
+  const showHint = v => {
+    hint.textContent = v.length && !v.trim() ? `${v.length} space${v.length > 1 ? "s" : ""}` : /^\s|\s$/.test(v) ? `"${v}"` : "";
+  };
+  showHint(value);
+  const inp = el("input", { type: "text", class: "input mono", value: visible, spellcheck: "false", placeholder: "(nothing)",
+    oninput: e => { const v = unescapeU(e.target.value); showHint(v); set(v); } });
+  return el("div", { class: "row-flex" }, inp, hint);
+}
+// `\u{e0b0}` in a text field stands for that code point (Nerd Font glyphs
+// are invisible in most UI fonts).
+function unescapeU(s) { return s.replace(/\\u\{([0-9a-fA-F]{1,6})\}/g, (_, h) => String.fromCodePoint(parseInt(h, 16))); }
+
+function optionalEditor(path, t, value, def, mod, name) {
+  const set = value !== null && value !== undefined;
+  const child = t.child;
+  const box = el("div", { class: "row-flex" });
+  if (child.kind === "string") {
+    const ph = mod ? glyphFor(mod, name) : undefined;
+    const inp = el("input", { type: "text", class: "input mono", spellcheck: "false",
+      value: set ? value.replace(/[-]/g, c => "\\u{" + c.codePointAt(0).toString(16) + "}") : "",
+      placeholder: set ? "" : ph !== undefined ? `default: ${ph}` : "default",
+      oninput: e => change(path, e.target.value === "" && !set ? null : unescapeU(e.target.value)) });
+    box.append(inp);
+    if (set) box.append(el("button", { class: "btn ghost small", title: "Use the default", onclick: () => change(path, null, { rerender: true }) }, "unset"));
+    if (name && (name.includes("fg") || name.includes("bg"))) {}
+    return box;
+  }
+  if (child.kind === "int") {
+    box.append(toggle(set, v => change(path, v ? (def ?? 50) : null, { rerender: true })));
+    if (set) box.append(el("input", { type: "number", class: "input", style: "max-width:120px", min: 0, max: child.max, value, oninput: e => change(path, parseInt(e.target.value || "0", 10)) }), el("span", { class: "muted" }, "ms"));
+    else box.append(el("span", { class: "muted" }, "use the global value"));
+    return box;
+  }
+  box.append(toggle(set, v => change(path, v ? (def ?? defaultFor(child)) : null, { rerender: true })));
+  if (set) return el("div", {}, box, editor(path, child, value, def, mod, name));
+  return box;
+}
+function defaultFor(t) {
+  switch (t.kind) {
+    case "bool": return false; case "int": return 0; case "string": return ""; case "enum": return t.values[0];
+    case "optional": return null; case "list": return [];
+    case "struct": return Object.fromEntries(t.fields.map(f => [f.name, defaultFor(f.type)]));
+  }
+}
+
+function listEditor(path, t, value, mod, name) {
+  const child = t.child;
+  if (child.kind === "string") {
+    const box = el("div", { class: "tags" });
+    value.forEach((v, i) => box.append(el("span", { class: "tag" }, v, el("button", { onclick: () => { const n = [...value]; n.splice(i, 1); change(path, n, { rerender: true }); } }, "×"))));
+    box.append(el("input", { placeholder: "add, then Enter", onkeydown: e => { if (e.key === "Enter" && e.target.value.trim()) { change(path, [...value, e.target.value.trim()], { rerender: true }); } } }));
+    return box;
+  }
+  if (child.kind === "struct") {
+    const box = el("div", {});
+    value.forEach((item, i) => {
+      const move = d => { const n = [...value]; const [x] = n.splice(i, 1); n.splice(i + d, 0, x); change(path, n, { rerender: true }); };
+      const card = el("div", { class: "piece" },
+        el("div", { class: "piece-head" }, el("b", { class: "mono" }, `#${i + 1}`), el("span", { style: "flex:1" }),
+          el("button", { class: "btn ghost small", disabled: i === 0, onclick: () => move(-1) }, "↑"),
+          el("button", { class: "btn ghost small", disabled: i === value.length - 1, onclick: () => move(1) }, "↓"),
+          el("button", { class: "btn ghost small danger", onclick: () => { const n = [...value]; n.splice(i, 1); change(path, n, { rerender: true }); } }, "remove")));
+      for (const f of child.fields) card.append(fieldRow([...path, i, f.name], f, item[f.name], defaultFor(f.type), mod));
+      box.append(card);
+    });
+    box.append(el("button", { class: "btn small", onclick: () => change(path, [...value, { ...defaultFor(child), text: "❧" }], { rerender: true }) }, "+ add a piece"));
+    if (mod === "text" && !cfg.order.includes("text")) box.append(el("div", { class: "muted", style: "margin-top:6px" }, "Add `text` to the layout to show these."));
+    return box;
+  }
+  return el("span", { class: "mono" }, JSON.stringify(value));
+}
+
+function toggle(on, set) {
+  const i = el("input", { type: "checkbox", checked: on, onchange: e => set(e.target.checked) });
+  return el("label", { class: "switch" }, i, el("span"));
+}
+
+// --- the color and style editor
+const FLAGS = [["bold", "B", "font-weight:700"], ["italic", "I", "font-style:italic"], ["underline", "U", "text-decoration:underline"],
+               ["strikethrough", "S", "text-decoration:line-through"], ["dim", "dim", ""], ["blink", "blink", ""], ["inverse", "inverse", ""]];
+function styleEditor(path, st, mod) {
+  const box = el("div", { class: "style-ed" });
+  const sample = el("span", { class: "sample" });
+  const word = { dir: "~/dev/carpet", git_branch: "⎇ main", git_status: "!2 ?1", duration: "◷ 3.2s", status: "✘ 1", jobs: "✦ 2", character: "❯" }[mod] || "sample text";
+  const paintSample = () => {
+    const fg = cssPaint(st.fg), bg = cssPaint(st.bg);
+    let css = "";
+    if (fg && fg.startsWith("linear")) css += `background-image:${fg};-webkit-background-clip:text;background-clip:text;color:transparent;`;
+    else if (fg) css += `color:${fg};`;
+    sample.style.cssText = css + (st.bold ? "font-weight:700;" : "") + (st.italic ? "font-style:italic;" : "") + (st.dim ? "opacity:.6;" : "") +
+      ([st.underline && "underline", st.strikethrough && "line-through"].filter(Boolean).join(" ") ? `text-decoration:${[st.underline && "underline", st.strikethrough && "line-through"].filter(Boolean).join(" ")};` : "");
+    sampleWrap.style.background = bg || "";
+    sample.classList.toggle("ansi-blink", !!st.blink);
+  };
+  const sampleWrap = el("span", { class: "sample-wrap" }, sample);
+  sample.textContent = ` ${word} `;
+  const set = (k, v) => { st = { ...st, [k]: v }; if (v === null || v === false) { if (k === "fg" || k === "bg") st[k] = null; } change(path, st); paintSample(); };
+  box.append(el("div", { class: "row-flex" }, sampleWrap));
+  box.append(paintEditor("fg", st.fg, v => set("fg", v)), paintEditor("bg", st.bg, v => set("bg", v)));
+  const flags = el("div", { class: "flags" });
+  for (const [k, label, css] of FLAGS) {
+    const b = el("button", { class: st[k] ? "on" : "", style: css, title: k, onclick: () => { b.classList.toggle("on"); set(k, b.classList.contains("on")); } }, label);
+    flags.append(b);
+  }
+  box.append(flags);
+  paintSample();
+  return box;
+}
+
+// fg or bg: none, one color, a gradient of stops, or the rainbow.
+function paintEditor(which, spec, set) {
+  const mode = !spec ? "none" : spec === "rainbow" ? "rainbow" : spec.includes(">") ? "gradient" : "color";
+  const wrap = el("div", { class: "paint" }, el("span", { class: "lbl" }, which));
+  const modes = el("div", { class: "seg" });
+  const body = el("div", { class: "paint" });
+  const pick = m => {
+    for (const b of modes.children) b.classList.toggle("on", b.dataset.m === m);
+    let next = null;
+    const first = spec && spec !== "rainbow" ? spec.split(">")[0] : "#e6a532";
+    if (m === "color") next = first;
+    if (m === "gradient") next = spec && spec.includes(">") ? spec : `${first}>#b8323b`;
+    if (m === "rainbow") next = "rainbow";
+    spec = next; set(next); drawBody(m);
+  };
+  for (const m of ["none", "color", "gradient", "rainbow"]) modes.append(el("button", { "data-m": m, class: m === mode ? "on" : "", onclick: () => pick(m) }, m));
+  const drawBody = m => {
+    body.innerHTML = "";
+    if (m === "color") body.append(stopEditor(spec, v => { spec = v; set(v); }), swatches(v => { spec = v; set(v); drawBody("color"); }));
+    if (m === "gradient") {
+      const stops = spec.split(">");
+      const bar = el("div", { class: "gradbar" });
+      const paintBar = () => { bar.style.background = cssPaint(stops.join(">")) || "none"; };
+      stops.forEach((s, i) => {
+        const ed = stopEditor(s, v => { stops[i] = v; spec = stops.join(">"); set(spec); paintBar(); },
+          stops.length > 2 ? () => { stops.splice(i, 1); spec = stops.join(">"); set(spec); drawBody("gradient"); } : null);
+        body.append(ed);
+        if (i < stops.length - 1) body.append(el("span", { class: "muted" }, "›"));
+      });
+      if (stops.length < 8) body.append(el("button", { class: "btn small", onclick: () => { stops.push(stops[stops.length - 1]); spec = stops.join(">"); set(spec); drawBody("gradient"); } }, "+ stop"));
+      body.append(bar); paintBar();
+    }
+    if (m === "rainbow") body.append(el("div", { class: "gradbar", style: "width:200px;background:" + cssPaint("rainbow") }));
+  };
+  wrap.append(modes, body);
+  drawBody(mode);
+  return wrap;
+}
+function stopEditor(value, set, remove) {
+  const hex = cssColor(value) || "#000000";
+  const color = el("input", { type: "color", value: hex });
+  const text = el("input", { type: "text", value, spellcheck: "false", title: "#rrggbb, a name like red or bright_cyan, or 0-255" });
+  color.addEventListener("input", () => { text.value = color.value; set(color.value); });
+  text.addEventListener("input", () => { const c = cssColor(text.value.trim()); if (c) color.value = c; set(text.value.trim()); });
+  return el("span", { class: "stop" }, color, text, remove ? el("button", { class: "x", onclick: remove, title: "Remove this stop" }, "×") : null);
+}
+function swatches(pick) {
+  const box = el("div", { class: "swatches" });
+  for (const c of SWATCHES) box.append(el("button", { style: "background:" + c, title: c, onclick: () => pick(c) }));
+  return box;
+}
+
+// ---------------------------------------------------------------------------
+// Actions
+
+function toast(html, ms = 3200) {
+  const t = $("toast");
+  t.innerHTML = html; t.classList.add("show");
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove("show"), ms);
+}
+async function save() {
+  if (!isDirty()) return;
+  try {
+    const r = await api("/api/save", { config: cfg });
+    if (r.error) { toast(`<span style="color:var(--red)">Not saved: ${esc(r.error)}</span>`, 6000); return; }
+    saved = JSON.stringify(cfg);
+    updateStatus(true); updateButtons();
+    toast(`<b>Saved</b> to <code>${esc(r.path)}</code>.<br>Press Enter in your terminal: the next prompt uses it.` + (r.backup ? `<br><span class="muted">Your previous file is ${esc(r.backup)}.</span>` : ""), 6000);
+    $("banners").innerHTML = "";
+  } catch (e) { toast(`<span style="color:var(--red)">${esc(e.message)}</span>`); }
+}
+async function load() {
+  state = await api("/api/state");
+  cfg = clone(state.config);
+  saved = JSON.stringify(cfg);
+  $("path").textContent = state.path;
+  $("term-title").textContent = "preview · " + state.cwd.replace(/^.*\//, "");
+  if (!$("pv-cwd").value) $("pv-cwd").value = state.cwd;
+  if (state.problem) $("banners").innerHTML = `<div class="banner err">Your config file has a problem, so the editor started from the defaults:<br><code>${esc(state.problem)}</code><br>Saving replaces the file (the broken one is kept as .bak).</div>`;
+  renderSections();
+  updateStatus(); updateButtons();
+  schedulePreview();
+  presetPreviews().then(() => { document.querySelectorAll("[data-preset]").forEach(c => { presetCache[c.dataset.preset] = c.querySelector(".mini").innerHTML; }); presetsRendered = true; });
+}
+
+$("save").onclick = save;
+$("undo").onclick = undo;
+$("redo").onclick = redo;
+$("revert").onclick = () => { if (confirm("Discard your changes and reload the file?")) replaceConfig(JSON.parse(saved)); };
+$("done").onclick = async () => {
+  if (isDirty() && !confirm("You have unsaved changes. Stop anyway?")) return;
+  window.onbeforeunload = null;
+  try { await api("/api/quit", {}); } catch (e) {}
+  serverGone();
+};
+for (const id of ["pv-status", "pv-duration", "pv-jobs", "pv-cwd"]) $(id).addEventListener("input", schedulePreview);
+$("pv-cwd").addEventListener("change", () => { presetPreviews(); });
+const applyFont = () => {
+  const f = $("pv-font").value.trim();
+  document.documentElement.style.setProperty("--preview-font", f ? `"${f}", var(--mono)` : "var(--mono)");
+  document.documentElement.style.setProperty("--preview-size", ($("pv-size").value || 15) + "px");
+  try { localStorage.setItem("buta-font", f); localStorage.setItem("buta-size", $("pv-size").value); } catch (e) {}
+};
+try { $("pv-font").value = localStorage.getItem("buta-font") || ""; $("pv-size").value = localStorage.getItem("buta-size") || 15; } catch (e) {}
+$("pv-font").addEventListener("input", applyFont); $("pv-size").addEventListener("input", applyFont); applyFont();
+addEventListener("keydown", e => {
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); save(); }
+  else if (mod && e.key.toLowerCase() === "z" && !e.target.matches("input,textarea")) { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+  else if (mod && e.key.toLowerCase() === "y" && !e.target.matches("input,textarea")) { e.preventDefault(); redo(); }
+});
+window.onbeforeunload = e => { if (cfg && isDirty()) { e.preventDefault(); return ""; } };
+if (!TOKEN) document.body.innerHTML = '<div style="padding:40px;font:16px system-ui">Open this page with the address <code>buta config</code> printed (it ends in #…).</div>';
+else load().catch(e => { $("preview").innerHTML = `<div class="stderr">${esc(e.message)}</div>`; });
+</script>
+</body>
+</html>

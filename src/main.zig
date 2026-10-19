@@ -6,6 +6,7 @@ const cli = @import("cli.zig");
 const config = @import("config.zig");
 const context = @import("context.zig");
 const daemon = @import("daemon.zig");
+const webconfig = @import("webconfig.zig");
 const env_mod = @import("env.zig");
 const glyphs = @import("glyphs.zig");
 const module = @import("module.zig");
@@ -67,6 +68,7 @@ fn run(io: Io, env: env_mod.Env, args: anytype, out: *Io.Writer, err: *Io.Writer
             error.InvalidShell => "init: unsupported shell (expected bash, zsh, fish or powershell)",
             error.UnexpectedArgument => "unexpected argument",
             error.InvalidDaemonArgument => "daemon: expected `--detach`, `status` or `stop`",
+            error.InvalidPort => "config: --port needs a number from 0 to 65535",
         }, cli.usage });
         return 2;
     };
@@ -78,6 +80,7 @@ fn run(io: Io, env: env_mod.Env, args: anytype, out: *Io.Writer, err: *Io.Writer
         .daemon => |opts| return daemon.main(io, env, opts, out, err),
         .preset => |p| return if (p.install) installPreset(io, env, p.name.?, out, err) else printPreset(p.name, out, err),
         .preview => |name| preview(io, env, name, out, err),
+        .config => |opts| return configEditor(io, env, opts, out, err),
     }
     return 0;
 }
@@ -125,6 +128,19 @@ fn prompt(io: Io, env: env_mod.Env, args: cli.PromptArgs, out: *Io.Writer, err: 
     out.flush() catch {};
     err.flush() catch {};
     std.process.exit(0);
+}
+
+fn configEditor(io: Io, env: env_mod.Env, opts: webconfig.Options, out: *Io.Writer, err: *Io.Writer) !u8 {
+    var home_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = config.path(&path_buf, env, context.normalizeHome(homeDir(env, &home_buf))) orelse {
+        try err.writeAll("buta: no config location: set BUTA_CONFIG or HOME\n");
+        return 1;
+    };
+    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var arg_cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd = workingDir(io, env, null, &arg_cwd_buf, &cwd_buf);
+    return webconfig.main(io, env, path, cwd.logical, opts, out, err);
 }
 
 fn printPreset(name: ?[]const u8, out: *Io.Writer, err: *Io.Writer) !u8 {
@@ -359,6 +375,7 @@ test {
     _ = config;
     _ = context;
     _ = daemon;
+    _ = webconfig;
     _ = env_mod;
     _ = glyphs;
     _ = @import("client.zig");

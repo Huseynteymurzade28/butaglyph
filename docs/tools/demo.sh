@@ -129,4 +129,16 @@ if command -v agg > /dev/null; then
         --theme 1e1e2e,cdd6f4,45475a,f38ba8,a6e3a1,f9e2af,89b4fa,f5c2e7,94e2d5,bac2de,585b70,f38ba8,a6e3a1,f9e2af,89b4fa,f5c2e7,94e2d5,a6adc8 \
         "$work/demo.cast" "$out/demo.gif"
 fi
+# 6. The configuration editor, `buta config`, with the carpet preset.
+setup_repo
+cp "$root/examples/carpet.zon" "$work/editor.zon"
+(cd "$repo" && BUTA_CONFIG="$work/editor.zon" exec "$bin" config --no-open > "$work/editor.log" 2>&1) &
+editor=$!
+for _ in $(seq 50); do grep -q http "$work/editor.log" 2> /dev/null && break; sleep 0.1; done
+url=$(grep -o 'http://[^ ]*' "$work/editor.log")
+chromium --headless --disable-gpu --hide-scrollbars --no-sandbox --force-device-scale-factor=2 \
+    --window-size=1280,860 --virtual-time-budget=6000 --screenshot="$work/editor.png" "$url" > /dev/null 2>&1
+kill $editor 2> /dev/null || true
+python3 -c "from PIL import Image; Image.open('$work/editor.png').convert('RGB').save('$out/config-editor.png', optimize=True)"
+
 echo "screenshots written to $out (work dir: $work)"

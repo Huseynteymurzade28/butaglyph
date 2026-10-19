@@ -92,6 +92,23 @@ in [`examples/`](examples).
 
 ## Make your own
 
+### In the browser
+
+```sh
+buta config
+```
+
+This opens an editor in your browser with a live preview, which is
+the real prompt drawn in your current directory. Load a preset, drag
+modules into place, pick colors and gradients, and choose segment
+shapes. **Save** writes your config file, and your next prompt uses it:
+press Enter in your terminal and the new look is there. The editor runs
+on `127.0.0.1` only, and stops when you click *Done* or press Ctrl-C.
+
+<p align="center"><img src="docs/config-editor.png" alt="buta config: the editor in a browser, with a live preview of the carpet preset and the preset gallery" width="760"></p>
+
+### By hand
+
 Start from a preset (`buta preset carpet --install`), then edit
 `~/.config/butaglyph/config.zon`. The next prompt shows the change, and
 `buta preview config.zon` shows a file you are still writing.

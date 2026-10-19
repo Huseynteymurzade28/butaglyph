@@ -510,3 +510,110 @@ test "docker, kubernetes and aws contexts come from their config files" {
     defer quiet.deinit();
     try testing.expectEqualStrings("", visible(quiet.stdout, &buf));
 }
+
+/// One HTTP request to `buta config`; returns the response body.
+fn httpRequest(port: u16, method: []const u8, path: []const u8, token: []const u8, host: []const u8, body: ?[]const u8) ![]u8 {
+    const addr = try std.Io.net.IpAddress.parse("127.0.0.1", port);
+    const stream = try addr.connect(io, .{ .mode = .stream });
+    defer stream.close(io);
+    var wbuf: [4096]u8 = undefined;
+    var w = stream.writer(io, &wbuf);
+    try w.interface.print("{s} {s} HTTP/1.1\r\nHost: {s}\r\nx-buta-token: {s}\r\n", .{ method, path, host, token });
+    if (body) |b| try w.interface.print("content-type: application/json\r\ncontent-length: {d}\r\n", .{b.len});
+    try w.interface.writeAll("\r\n");
+    if (body) |b| try w.interface.writeAll(b);
+    try w.interface.flush();
+    var rbuf: [4096]u8 = undefined;
+    var r = stream.reader(io, &rbuf);
+    const response = try r.interface.allocRemaining(gpa, .limited(1 << 20));
+    defer gpa.free(response);
+    const start = (std.mem.indexOf(u8, response, "\r\n\r\n") orelse return error.BadResponse) + 4;
+    return gpa.dupe(u8, response[start..]);
+}
+
+test "buta config serves the editor, previews and saves" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try makeFixture(&tmp);
+    defer gpa.free(root);
+    const cfg = try std.fs.path.join(gpa, &.{ root, "config.zon" });
+    defer gpa.free(cfg);
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.zon", .data = "// mine\n.{ .glyphs = .ascii }\n" });
+
+    var map: std.process.Environ.Map = .init(gpa);
+    defer map.deinit();
+    try map.put("PATH", testPath());
+    try map.put("HOME", root);
+    try map.put("BUTA_CONFIG", cfg);
+    if (builtin.os.tag == .windows) {
+        // Winsock needs it.
+        var parent = try testing.environ.createMap(gpa);
+        defer parent.deinit();
+        if (parent.get("SystemRoot")) |v| try map.put("SystemRoot", v);
+    }
+    var child = try std.process.spawn(io, .{
+        .argv = &.{ try butaPath(), "config", "--no-open" },
+        .cwd = .{ .path = root },
+        .environ_map = &map,
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .ignore,
+    });
+    defer child.kill(io);
+
+    // The first line is `buta config: http://127.0.0.1:<port>/#<token>`.
+    var lbuf: [512]u8 = undefined;
+    var lr = child.stdout.?.readerStreaming(io, &lbuf);
+    const line = try lr.interface.takeDelimiterExclusive('\n');
+    const url = line[std.mem.indexOf(u8, line, "http://").?..];
+    const port_start = "http://127.0.0.1:".len;
+    const port_end = std.mem.indexOfScalarPos(u8, url, port_start, '/').?;
+    const port = try std.fmt.parseInt(u16, url[port_start..port_end], 10);
+    const token = url[std.mem.indexOfScalar(u8, url, '#').? + 1 ..];
+    var host_buf: [32]u8 = undefined;
+    const host = try std.fmt.bufPrint(&host_buf, "127.0.0.1:{d}", .{port});
+
+    const page = try httpRequest(port, "GET", "/", "", host, null);
+    defer gpa.free(page);
+    try testing.expect(std.mem.indexOf(u8, page, "<title>buta config</title>") != null);
+
+    // Without the token, or under another name, nothing is answered.
+    const denied = try httpRequest(port, "GET", "/api/state", "nope", host, null);
+    defer gpa.free(denied);
+    try testing.expect(std.mem.indexOf(u8, denied, "bad token") != null);
+    const rebound = try httpRequest(port, "GET", "/api/state", token, "evil.example:80", null);
+    defer gpa.free(rebound);
+    try testing.expectEqualStrings("", rebound);
+
+    const state = try httpRequest(port, "GET", "/api/state", token, host, null);
+    defer gpa.free(state);
+    try testing.expect(std.mem.indexOf(u8, state, "\"glyphs\":\"ascii\"") != null);
+    try testing.expect(std.mem.indexOf(u8, state, "\"name\":\"carpet\"") != null);
+
+    // A preview is the real prompt, drawn with the edited config.
+    const preview = try httpRequest(port, "POST", "/api/preview", token, host,
+        \\{"config":{"glyphs":"ascii","order":["status","character"],"character":{"failure_symbol":"FAIL"}},"runs":[{"status":3}]}
+    );
+    defer gpa.free(preview);
+    var vbuf: [256]u8 = undefined;
+    const parsed = try std.json.parseFromSlice(struct { runs: []const struct { prompt: []const u8 } }, gpa, preview, .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
+    try testing.expectEqualStrings("x 3 FAIL ", visible(parsed.value.runs[0].prompt, &vbuf));
+
+    // Saving writes the file (and keeps the old one), and the prompt uses it.
+    const saved = try httpRequest(port, "POST", "/api/save", token, host,
+        \\{"config":{"glyphs":"ascii","order":["character"],"character":{"success_symbol":"$$"}}}
+    );
+    defer gpa.free(saved);
+    try testing.expect(std.mem.indexOf(u8, saved, "\"backup\":") != null);
+    var fbuf: [1024]u8 = undefined;
+    try testing.expectEqualStrings("// mine\n.{ .glyphs = .ascii }\n", try tmp.dir.readFile(io, "config.zon.bak", &fbuf));
+    const r = try run(&.{ try butaPath(), "prompt" }, root, &.{.{ "BUTA_CONFIG", cfg }});
+    defer r.deinit();
+    try testing.expectEqualStrings("$$ ", visible(r.stdout, &vbuf));
+
+    const bye = try httpRequest(port, "POST", "/api/quit", token, host, "{}");
+    defer gpa.free(bye);
+    try testing.expect(std.mem.indexOf(u8, bye, "\"ok\":true") != null);
+    _ = try child.wait(io);
+}

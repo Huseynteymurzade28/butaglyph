@@ -3,6 +3,45 @@
 Back to the [README](../README.md). For how buta works inside, see
 [internals.md](internals.md).
 
+## The editor: `buta config`
+
+`buta config` starts a small web server on `127.0.0.1` and opens the
+editor in your browser. It edits the same config file the prompt reads,
+so a save shows up in your very next prompt.
+
+* **Live preview.** Every change redraws two sample prompts: one after a
+  command that worked, and one after a slow command that failed. The
+  preview runs the real `buta prompt` with your edited config, in the
+  directory where you started `buta config`; you can change the directory,
+  the exit status, the duration and the job count. Set the preview font to
+  your terminal's font if you use Nerd Font glyphs.
+* **Presets** are drawn the same way in your directory; click one to load it.
+* **Layout**: drag modules into order, remove them, add `line_break` for
+  a second line.
+* **Look and segments**: the glyph set, the separator, and a gallery of
+  segment shapes.
+* **Every module's options**, including colors, gradients (up to eight
+  stops), rainbow and the text style flags. The forms are generated from
+  the config's own types, so every option in this document is there.
+* **config.zon**: the file that *Save* writes, which you can also edit
+  as text.
+* Undo and redo (Ctrl+Z, Ctrl+Shift+Z), save (Ctrl+S).
+
+Saving writes only what differs from the defaults. Comments in the file
+are not kept, and the file as it was is kept next to it as `config.zon.bak`
+(the first time you save in a session).
+
+```sh
+buta config               # opens the browser
+buta config --no-open     # prints the address instead (e.g. over SSH, with a port forward)
+buta config --port 7777   # a fixed port instead of any free one
+```
+
+The server answers only requests that carry a random token, which is part
+of the address it prints, and only when they name `127.0.0.1` or
+`localhost` as the host. Other users on the machine and other web pages
+can't read or change your config through it.
+
 ## The config file
 
 buta reads its config from `$BUTA_CONFIG` if set, otherwise from

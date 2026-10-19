@@ -152,6 +152,8 @@ src/
   context.zig        shared read-only input: cwd, env, status, duration, jobs
   module.zig         module interface, registry, compute/render drivers
   config.zig         ZON config loading
+  webconfig.zig      `buta config`: HTTP server, JSON/ZON conversion, schema
+  webconfig/         the editor page (embedded)
   glyphs.zig         glyph sets: Unicode (default), Nerd Font, ASCII
   render.zig         spans, colors, gradients (OKLab), ANSI, per-shell quoting
   git/               the git reader (its own module, imported as "git")
@@ -251,6 +253,11 @@ the daemon.
   segment shapes), and Nerd Font icons are opt-in. New modules: `aws`,
   `docker_context` and `kubernetes`, read from their config files without
   running any CLI.
+* **Phase 8 (done): `buta config`.** A configuration editor in the
+  browser. The page's forms are built from a schema that is derived from
+  the `Config` type at compile time. The preview runs the real prompt in
+  a child process. Saving writes minimal ZON that is checked to read back
+  as the same config.
 
 Planned work and known gaps are tracked in
 [GitHub issues](https://github.com/Huseynteymurzade28/butaglyph/issues).

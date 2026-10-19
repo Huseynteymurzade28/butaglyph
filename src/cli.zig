@@ -5,6 +5,7 @@
 const std = @import("std");
 const Shell = @import("render.zig").Shell;
 const daemon = @import("daemon.zig");
+const webconfig = @import("webconfig.zig");
 
 pub const InitShell = enum { bash, zsh, fish, powershell };
 
@@ -26,6 +27,8 @@ pub const Command = union(enum) {
     preset: PresetArgs,
     /// Draw sample prompts with every preset, one preset, or a config file.
     preview: ?[]const u8,
+    /// The configuration editor in the browser.
+    config: webconfig.Options,
     version,
     help,
 };
@@ -36,7 +39,7 @@ pub const PresetArgs = struct {
     install: bool = false,
 };
 
-pub const Error = error{ UnknownCommand, MissingShell, InvalidShell, UnexpectedArgument, InvalidDaemonArgument };
+pub const Error = error{ UnknownCommand, MissingShell, InvalidShell, UnexpectedArgument, InvalidDaemonArgument, InvalidPort };
 
 pub const usage =
     \\Usage:
@@ -56,6 +59,9 @@ pub const usage =
     \\  buta preset                  List the built-in presets
     \\  buta preset <name>           Print one
     \\  buta preset <name> --install Make it your config (the old one is kept as .bak)
+    \\  buta config [options]       Edit your config in the browser, with a live preview
+    \\      --port <int>             Port on 127.0.0.1 (default: any free one)
+    \\      --no-open                Print the address instead of opening a browser
     \\  buta --version
     \\  buta --help
     \\
@@ -93,6 +99,17 @@ pub fn parse(args: anytype) Error!Command {
         }
         if (p.install and p.name == null) return error.UnexpectedArgument;
         return .{ .preset = p };
+    }
+    if (eql(cmd, "config")) {
+        var o: webconfig.Options = .{};
+        while (args.next()) |arg| {
+            if (eql(arg, "--no-open")) {
+                o.open = false;
+            } else if (eql(arg, "--port")) {
+                o.port = std.fmt.parseInt(u16, args.next() orelse return error.InvalidPort, 10) catch return error.InvalidPort;
+            } else return error.UnexpectedArgument;
+        }
+        return .{ .config = o };
     }
     if (eql(cmd, "daemon")) {
         var opts: daemon.Options = .{};
@@ -199,4 +216,12 @@ test "daemon commands" {
     try std.testing.expectEqual(Command{ .daemon = .{ .action = .status } }, try testParse(&.{ "daemon", "status" }));
     try std.testing.expectError(error.InvalidDaemonArgument, testParse(&.{ "daemon", "restart" }));
     try std.testing.expectError(error.InvalidDaemonArgument, testParse(&.{ "daemon", "stop", "--detach" }));
+}
+
+test "config command" {
+    try std.testing.expectEqual(Command{ .config = .{} }, try testParse(&.{"config"}));
+    try std.testing.expectEqual(Command{ .config = .{ .port = 8080, .open = false } }, try testParse(&.{ "config", "--port", "8080", "--no-open" }));
+    try std.testing.expectError(error.InvalidPort, testParse(&.{ "config", "--port", "99999" }));
+    try std.testing.expectError(error.InvalidPort, testParse(&.{ "config", "--port" }));
+    try std.testing.expectError(error.UnexpectedArgument, testParse(&.{ "config", "extra" }));
 }
