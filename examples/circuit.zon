@@ -1,0 +1,30 @@
+// circuit: a printed circuit board, with copper traces and solder pads.
+// The modules are components on the traces; the prompt is a pin.
+// Needs a truecolor terminal.
+.{
+    .separator = " ━┿━ ",
+    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character },
+    .text = .{ .pieces = .{
+        .{ .text = "┏━", .style = .{ .fg = "#b87333" } },
+        .{ .text = "◍", .style = .{ .fg = "#e8c27a", .bold = true } },
+        .{ .text = "━ ", .style = .{ .fg = "#b87333" } },
+    } },
+    .dir = .{ .style = .{ .fg = "#3ddc84", .bold = true }, .separator = "╶╴" },
+    .git_branch = .{ .style = .{ .fg = "#e8c27a" }, .symbol = "⏚ " },
+    .git_status = .{ .style = .{ .fg = "#ff5f56", .bold = true } },
+    .python = .{ .style = .{ .fg = "#7fd6ff" } },
+    .node = .{ .style = .{ .fg = "#7fd6ff" } },
+    .rust = .{ .style = .{ .fg = "#7fd6ff" } },
+    .go = .{ .style = .{ .fg = "#7fd6ff" } },
+    .zig = .{ .style = .{ .fg = "#7fd6ff" } },
+    .aws = .{ .style = .{ .fg = "#7fd6ff" } },
+    .duration = .{ .style = .{ .fg = "#e8c27a" }, .symbol = "◷ " },
+    .status = .{ .style = .{ .fg = "#ff5f56", .bold = true }, .symbol = "↯ " },
+    .jobs = .{ .style = .{ .fg = "#e8c27a" } },
+    .character = .{
+        .success_symbol = "┗━━▷",
+        .failure_symbol = "┗━━╳",
+        .success_style = .{ .fg = "#b87333>#e8c27a", .bold = true },
+        .failure_style = .{ .fg = "#b87333>#ff5f56", .bold = true },
+    },
+}

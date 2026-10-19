@@ -1,0 +1,30 @@
+// glitch: a corrupted signal, red and cyan torn apart.
+// Dithered edges shear between segments, the branch is underlined like a
+// link nobody should click, and a failed command flashes ERR.
+// Needs a truecolor terminal.
+.{
+    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character },
+    .segments = .{ .open = "▖▚▞", .join = "▞▚", .close = "▚▞▘", .padding = " " },
+    .text = .{ .pieces = .{
+        .{ .text = "▙", .style = .{ .fg = "#ff0040" } },
+        .{ .text = "▟", .style = .{ .fg = "#00fff0" } },
+    } },
+    .dir = .{ .style = .{ .fg = "#ffffff", .bg = "#ff0040>#2b0010", .bold = true }, .separator = " ⌿ " },
+    .git_branch = .{ .style = .{ .fg = "#00fff0", .bg = "#0a0a0a", .bold = true, .underline = true } },
+    .git_status = .{ .style = .{ .fg = "#0a0a0a", .bg = "#00fff0>#ff0040", .bold = true } },
+    .python = .{ .style = .{ .fg = "#0a0a0a", .bg = "#fff200", .bold = true } },
+    .node = .{ .style = .{ .fg = "#0a0a0a", .bg = "#fff200", .bold = true } },
+    .rust = .{ .style = .{ .fg = "#0a0a0a", .bg = "#fff200", .bold = true } },
+    .go = .{ .style = .{ .fg = "#0a0a0a", .bg = "#fff200", .bold = true } },
+    .zig = .{ .style = .{ .fg = "#0a0a0a", .bg = "#fff200", .bold = true } },
+    .aws = .{ .style = .{ .fg = "#fff200", .bg = "#0a0a0a", .bold = true } },
+    .duration = .{ .style = .{ .fg = "#ff0040", .bg = "#0a0a0a", .italic = true } },
+    .status = .{ .style = .{ .fg = "#ffffff", .bg = "#ff0040", .bold = true, .blink = true } },
+    .jobs = .{ .style = .{ .fg = "#0a0a0a", .bg = "#00fff0" } },
+    .character = .{
+        .success_symbol = "▒░❯",
+        .failure_symbol = "ERR▓▒░",
+        .success_style = .{ .fg = "#ff0040>#00fff0", .bold = true },
+        .failure_style = .{ .fg = "#ff0040", .bold = true, .blink = true },
+    },
+}

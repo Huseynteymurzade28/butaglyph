@@ -1,0 +1,29 @@
+// static: a dead channel at 3 a.m., and the camera is still recording.
+// Braille snow fizzes at the edges of grey segments.
+// Needs a truecolor terminal.
+.{
+    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character },
+    .segments = .{ .open = "⡀⣄⣶⣿", .join = "⢾⡷", .close = "⣿⡶⠦⠂", .padding = " " },
+    .text = .{ .pieces = .{
+        .{ .text = "● ", .style = .{ .fg = "#ff1f1f", .bold = true, .blink = true } },
+        .{ .text = "REC ", .style = .{ .fg = "#e0e0e0", .bold = true } },
+    } },
+    .dir = .{ .style = .{ .fg = "#111111", .bg = "#d9d9d9>#8c8c8c", .bold = true }, .separator = " ⋮ " },
+    .git_branch = .{ .style = .{ .fg = "#e0e0e0", .bg = "#3a3a3a", .bold = true } },
+    .git_status = .{ .style = .{ .fg = "#111111", .bg = "#8c8c8c", .bold = true } },
+    .python = .{ .style = .{ .fg = "#e0e0e0", .bg = "#555555" } },
+    .node = .{ .style = .{ .fg = "#e0e0e0", .bg = "#555555" } },
+    .rust = .{ .style = .{ .fg = "#e0e0e0", .bg = "#555555" } },
+    .go = .{ .style = .{ .fg = "#e0e0e0", .bg = "#555555" } },
+    .zig = .{ .style = .{ .fg = "#e0e0e0", .bg = "#555555" } },
+    .aws = .{ .style = .{ .fg = "#e0e0e0", .bg = "#555555" } },
+    .duration = .{ .style = .{ .fg = "#e0e0e0", .bg = "#222222", .italic = true } },
+    .status = .{ .style = .{ .fg = "#ffffff", .bg = "#b00000", .bold = true } },
+    .jobs = .{ .style = .{ .fg = "#111111", .bg = "#d9d9d9" } },
+    .character = .{
+        .success_symbol = "▒▓▶",
+        .failure_symbol = "▒▓▶",
+        .success_style = .{ .fg = "#555555>#e0e0e0", .bold = true },
+        .failure_style = .{ .fg = "#555555>#ff1f1f", .bold = true },
+    },
+}

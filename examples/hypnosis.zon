@@ -1,0 +1,26 @@
+// hypnosis: don't stare at it. Rainbows, checkerboards and rings.
+// Every segment is a rainbow, the edges are a checkerboard, and the
+// prompt is a spiral of rings. Needs a truecolor terminal.
+.{
+    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character },
+    .segments = .{ .open = "▚▞▚", .join = "▞▚▞", .close = "▚▞▚", .padding = " " },
+    .text = .{ .pieces = .{.{ .text = "◉◎○ ", .style = .{ .fg = "rainbow", .bold = true } }} },
+    .dir = .{ .style = .{ .fg = "#000000", .bg = "rainbow", .bold = true }, .separator = " ◌ ", .max_length = 0 },
+    .git_branch = .{ .style = .{ .fg = "#ffffff", .bg = "#ff00ff>#00ffff>#ff00ff", .bold = true, .italic = true } },
+    .git_status = .{ .style = .{ .fg = "rainbow", .bg = "#000000", .bold = true } },
+    .python = .{ .style = .{ .fg = "#000000", .bg = "#ffff00>#00ff00", .bold = true } },
+    .node = .{ .style = .{ .fg = "#000000", .bg = "#ffff00>#00ff00", .bold = true } },
+    .rust = .{ .style = .{ .fg = "#000000", .bg = "#ffff00>#00ff00", .bold = true } },
+    .go = .{ .style = .{ .fg = "#000000", .bg = "#ffff00>#00ff00", .bold = true } },
+    .zig = .{ .style = .{ .fg = "#000000", .bg = "#ffff00>#00ff00", .bold = true } },
+    .aws = .{ .style = .{ .fg = "#000000", .bg = "#ffff00>#00ff00", .bold = true } },
+    .duration = .{ .style = .{ .fg = "#ffffff", .bg = "#0000ff>#ff00ff", .bold = true } },
+    .status = .{ .style = .{ .fg = "#000000", .bg = "rainbow", .bold = true, .blink = true } },
+    .jobs = .{ .style = .{ .fg = "#000000", .bg = "#00ffff" } },
+    .character = .{
+        .success_symbol = "○◎◉❯",
+        .failure_symbol = "◉◉◉✺",
+        .success_style = .{ .fg = "rainbow", .bold = true },
+        .failure_style = .{ .fg = "#ff0000>#ffff00>#ff0000", .bold = true, .blink = true },
+    },
+}

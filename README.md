@@ -70,7 +70,7 @@ Then add one line to your shell:
 
 ## Presets
 
-<p align="center"><img src="docs/gallery.png" alt="buta preview: the ten built-in presets in one terminal" width="760"></p>
+<p align="center"><img src="docs/gallery.png" alt="buta preview: the seventeen built-in presets in one terminal" width="760"></p>
 
 ```sh
 buta preview                  # see every preset, in your own directory
@@ -82,6 +82,10 @@ buta preset carpet --install  # use one (your old config is kept as .bak)
 | <img src="docs/preset-carpet.png" alt="carpet" width="400"><br>**carpet**: the colors of an Azerbaijani carpet | <img src="docs/preset-neon.png" alt="neon" width="400"><br>**neon**: synthwave, fading in through `░▒▓` |
 | <img src="docs/preset-acid.png" alt="acid" width="400"><br>**acid**: rainbows and flames, too much on purpose | <img src="docs/preset-pixel.png" alt="pixel" width="400"><br>**pixel**: an 8-bit handheld |
 | <img src="docs/preset-aurora.png" alt="aurora" width="400"><br>**aurora**: soft gradients, no boxes | <img src="docs/preset-bubbles.png" alt="bubbles" width="400"><br>**bubbles**: pastel pills |
+| <img src="docs/preset-glitch.png" alt="glitch" width="400"><br>**glitch**: a corrupted signal, red and cyan torn apart | <img src="docs/preset-inferno.png" alt="inferno" width="400"><br>**inferno**: on fire, from coal red to white heat |
+| <img src="docs/preset-hypnosis.png" alt="hypnosis" width="400"><br>**hypnosis**: rainbows, checkerboards and rings | <img src="docs/preset-vaporwave.png" alt="vaporwave" width="400"><br>**vaporwave**: ＡＥＳＴＨＥＴＩＣ |
+| <img src="docs/preset-matrix.png" alt="matrix" width="400"><br>**matrix**: green phosphor and braille rain | <img src="docs/preset-static.png" alt="static" width="400"><br>**static**: a dead channel, still recording |
+| <img src="docs/preset-circuit.png" alt="circuit" width="400"><br>**circuit**: copper traces and solder pads | |
 
 Also `tokyo-night`, `two-line`, `minimal` and `ascii`. Their sources are
 in [`examples/`](examples).

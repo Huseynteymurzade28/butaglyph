@@ -1,0 +1,30 @@
+// matrix: wake up. Green phosphor and braille code rain.
+// No boxes: the screen is the box. Needs a truecolor terminal.
+.{
+    .separator = " ⁞ ",
+    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character },
+    .text = .{ .pieces = .{
+        .{ .text = "⡇", .style = .{ .fg = "#003b00" } },
+        .{ .text = "⣿", .style = .{ .fg = "#008f11" } },
+        .{ .text = "⢸", .style = .{ .fg = "#00ff41", .bold = true } },
+        .{ .text = "⠇ ", .style = .{ .fg = "#d4ffd8", .bold = true } },
+    } },
+    .dir = .{ .style = .{ .fg = "#00ff41", .bold = true }, .home_symbol = "~", .separator = "/" },
+    .git_branch = .{ .style = .{ .fg = "#008f11" }, .symbol = "branch:" },
+    .git_status = .{ .style = .{ .fg = "#d4ffd8", .bold = true } },
+    .python = .{ .style = .{ .fg = "#00ff41" } },
+    .node = .{ .style = .{ .fg = "#00ff41" } },
+    .rust = .{ .style = .{ .fg = "#00ff41" } },
+    .go = .{ .style = .{ .fg = "#00ff41" } },
+    .zig = .{ .style = .{ .fg = "#00ff41" } },
+    .aws = .{ .style = .{ .fg = "#00ff41" } },
+    .duration = .{ .style = .{ .fg = "#008f11", .italic = true }, .symbol = "t+" },
+    .status = .{ .style = .{ .fg = "#ff2a2a", .bold = true }, .symbol = "SIGNAL LOST " },
+    .jobs = .{ .style = .{ .fg = "#008f11" } },
+    .character = .{
+        .success_symbol = "⣿⣿▶",
+        .failure_symbol = "⣿⣿▶",
+        .success_style = .{ .fg = "#003b00>#00ff41", .bold = true },
+        .failure_style = .{ .fg = "#003b00>#ff2a2a", .bold = true },
+    },
+}

@@ -1,0 +1,26 @@
+// vaporwave: a pink and cyan sunset in ＦＵＬＬ ＷＩＤＴＨ letters.
+// A marble-statue calm. Needs a truecolor terminal; the full-width
+// letters come from your system's CJK font.
+.{
+    .order = .{ .text, .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character },
+    .segments = .{ .open = "░▒▓", .join = "▓▒░", .close = "▓▒░", .padding = " " },
+    .text = .{ .pieces = .{.{ .text = "ＶＡＰＯＲ ", .style = .{ .fg = "#ff71ce>#01cdfe", .bold = true, .italic = true } }} },
+    .dir = .{ .style = .{ .fg = "#ffffff", .bg = "#ff71ce>#b967ff", .bold = true }, .separator = " ／ ", .home_symbol = "～" },
+    .git_branch = .{ .style = .{ .fg = "#2d1b4e", .bg = "#01cdfe", .bold = true } },
+    .git_status = .{ .style = .{ .fg = "#2d1b4e", .bg = "#05ffa1", .bold = true } },
+    .python = .{ .style = .{ .fg = "#2d1b4e", .bg = "#fffb96", .bold = true } },
+    .node = .{ .style = .{ .fg = "#2d1b4e", .bg = "#fffb96", .bold = true } },
+    .rust = .{ .style = .{ .fg = "#2d1b4e", .bg = "#fffb96", .bold = true } },
+    .go = .{ .style = .{ .fg = "#2d1b4e", .bg = "#fffb96", .bold = true } },
+    .zig = .{ .style = .{ .fg = "#2d1b4e", .bg = "#fffb96", .bold = true } },
+    .aws = .{ .style = .{ .fg = "#2d1b4e", .bg = "#fffb96", .bold = true } },
+    .duration = .{ .style = .{ .fg = "#ffffff", .bg = "#b967ff", .italic = true } },
+    .status = .{ .style = .{ .fg = "#ffffff", .bg = "#ff3f8e", .bold = true } },
+    .jobs = .{ .style = .{ .fg = "#2d1b4e", .bg = "#01cdfe" } },
+    .character = .{
+        .success_symbol = "（^_^）ﾉ",
+        .failure_symbol = "（╥_╥）",
+        .success_style = .{ .fg = "#ff71ce>#01cdfe", .bold = true },
+        .failure_style = .{ .fg = "#ff3f8e>#b967ff", .bold = true },
+    },
+}

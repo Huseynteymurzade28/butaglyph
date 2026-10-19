@@ -6,11 +6,14 @@
 # Builds buta, sets up a demo repository (with an upstream) under a fake
 # $HOME in work-dir, plays scenes in zsh and pwsh inside tmux, and renders
 # the captures with render.py, and records docs/demo.gif. Needs zig, git,
-# tmux, zsh, chromium and JetBrainsMono Nerd Font; pwsh (PWSH=/path/to/pwsh)
-# and agg (for the GIF) are optional.
+# tmux, zsh, chromium and DejaVu Sans Mono (a plain font, to show that no
+# Nerd Font is needed); pwsh (PWSH=/path/to/pwsh) and agg (for the GIF) are
+# optional.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
+font="DejaVu Sans Mono"
+render() { python3 "$root/docs/tools/render.py" "$@" --font "$font"; }
 work=${1:-$(mktemp -d)}
 out=$root/docs
 home=$work/home
@@ -84,21 +87,21 @@ BUTA_CONFIG=/nonexistent play hero "$(zsh_with "")" 86 22 \
     'sleep 2.4' \
     'git commit -qm "Add ornament"' \
     'git fetch -q'
-python3 "$root/docs/tools/render.py" "$work/hero.ans" "$out/hero.png" --title "zsh — ~/projects/carpet" --cols 86
+render "$work/hero.ans" "$out/hero.png" --title "zsh — ~/projects/carpet" --cols 86
 
 # 2. The presets in examples/, on the same dirty repository.
-for preset in carpet neon acid pixel aurora bubbles tokyo-night two-line minimal ascii; do
+for preset in $(grep -o 'name = "[^"]*"' "$root/examples/presets.zig" | cut -d'"' -f2); do
     setup_repo
-    play "preset-$preset" "$(zsh_with "$root/examples/$preset.zon")" 70 10 \
+    play "preset-$preset" "$(zsh_with "$root/examples/$preset.zon")" 90 10 \
         'echo "ornament" >> motifs.txt; touch sketch.svg' \
         'sleep 2.2; false'
-    python3 "$root/docs/tools/render.py" "$work/preset-$preset.ans" "$out/preset-$preset.png" --title "examples/$preset.zon" --cols 70
+    render "$work/preset-$preset.ans" "$out/preset-$preset.png" --title "examples/$preset.zon" --cols 90
 done
 
 # 3. Every preset at once, as `buta preview` draws them.
 setup_repo
-play gallery "$(zsh_with "")" 84 44 "echo ornament >> motifs.txt; touch sketch.svg; clear; '$bin' preview"
-python3 "$root/docs/tools/render.py" "$work/gallery.ans" "$out/gallery.png" --title "buta preview" --cols 84
+play gallery "$(zsh_with "")" 100 70 "echo ornament >> motifs.txt; touch sketch.svg; clear; '$bin' preview"
+render "$work/gallery.ans" "$out/gallery.png" --title "buta preview" --cols 100
 
 # 4. PowerShell.
 if [[ -n ${PWSH:-} ]]; then
@@ -107,7 +110,7 @@ if [[ -n ${PWSH:-} ]]; then
         'Set-Content notes.md "todo"' \
         'Get-Process nope' \
         'Start-Sleep 2.6'
-    python3 "$root/docs/tools/render.py" "$work/pwsh.ans" "$out/powershell.png" --title "PowerShell 7" --cols 76
+    render "$work/pwsh.ans" "$out/powershell.png" --title "PowerShell 7" --cols 76
 fi
 # 5. The animated tour, recorded from a real terminal session, in the
 # project's own preset.
@@ -121,7 +124,7 @@ if command -v agg > /dev/null; then
         'git commit -qm "Add ornament"' \
         'git fetch -q')
     # Catppuccin Mocha, as in the screenshots.
-    agg --quiet --font-family "JetBrainsMono Nerd Font Mono" --font-size 22 --line-height 1.35 --last-frame-duration 4 \
+    agg --quiet --font-family "$font" --font-size 22 --line-height 1.35 --last-frame-duration 4 \
         --theme 1e1e2e,cdd6f4,45475a,f38ba8,a6e3a1,f9e2af,89b4fa,f5c2e7,94e2d5,bac2de,585b70,f38ba8,a6e3a1,f9e2af,89b4fa,f5c2e7,94e2d5,a6adc8 \
         "$work/demo.cast" "$out/demo.gif"
 fi
