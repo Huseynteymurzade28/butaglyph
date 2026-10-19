@@ -85,36 +85,129 @@ fn isExecutable(io: Io, path: []const u8) bool {
 }
 
 /// Runs `exe args...` and returns the version it prints, from the version
-/// cache when the binary has not changed since it was last asked. The
-/// module's deadline decides whether this prompt waits for the answer; a
-/// tool still running after `probe_timeout_ms` is killed.
+/// cache when the binary has not changed since it was last asked.
+///
+/// On a cache miss the tool is run by a helper process (`buta
+/// __probe-version`) that writes the cache, and this prompt waits for the
+/// answer as long as the module's deadline allows. The helper outlives the
+/// prompt, so a tool slower than the deadline is still asked only once: the
+/// next prompt finds its answer. A `.pending` file next to the entry keeps
+/// prompts from starting a second helper for the same binary. Tools that
+/// can't be cached (shims) run here, every time.
 pub fn probe(ctx: *const Context, arena: Allocator, exe: []const u8, args: []const []const u8) !?[]const u8 {
     const st = try Io.Dir.cwd().statFile(ctx.io, exe, .{});
     const key = try std.fmt.allocPrint(arena, "{s}\t{d}\t{d}\t{d}", .{ exe, st.size, st.mtime.nanoseconds, st.inode });
     const cacheable = !isShim(exe);
     var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
     const dir = if (cacheable) cacheDir(ctx, &dir_buf) else null;
-    if (dir) |d| if (readCache(ctx.io, arena, d, key)) |v| return v;
-
-    const argv = try arena.alloc([]const u8, args.len + 1);
-    argv[0] = exe;
-    @memcpy(argv[1..], args);
-    const r = try std.process.run(arena, ctx.io, .{
-        .argv = argv,
-        // Shims and version managers decide by the directory they run in.
-        .cwd = .{ .path = ctx.physical_cwd },
-        .stdout_limit = .limited(4096),
-        .stderr_limit = .limited(4096),
-        .timeout = .{ .duration = .{ .raw = .fromMilliseconds(probe_timeout_ms), .clock = .awake } },
-    });
-    if (r.term != .exited or r.term.exited != 0) return error.ToolFailed;
-    // Python 2 prints its version on stderr.
-    const version = parseVersion(r.stdout) orelse parseVersion(r.stderr) orelse return null;
+    if (dir) |d| {
+        if (readCache(ctx.io, arena, d, key)) |v| return v;
+        if (startHelper(ctx, arena, d, key, exe, args)) return awaitHelper(ctx.io, arena, d, key);
+    }
+    const version = try runTool(ctx.io, arena, ctx.physical_cwd, exe, args, probe_timeout_ms) orelse return null;
     if (dir) |d| writeCache(ctx.io, arena, d, key, version);
     return version;
 }
 
+fn runTool(io: Io, arena: Allocator, cwd: []const u8, exe: []const u8, args: []const []const u8, timeout_ms: u32) !?[]const u8 {
+    const argv = try arena.alloc([]const u8, args.len + 1);
+    argv[0] = exe;
+    @memcpy(argv[1..], args);
+    const r = try std.process.run(arena, io, .{
+        .argv = argv,
+        // Shims and version managers decide by the directory they run in.
+        .cwd = .{ .path = cwd },
+        .stdout_limit = .limited(4096),
+        .stderr_limit = .limited(4096),
+        .timeout = .{ .duration = .{ .raw = .fromMilliseconds(timeout_ms), .clock = .awake } },
+    });
+    if (r.term != .exited or r.term.exited != 0) return error.ToolFailed;
+    // Python 2 prints its version on stderr.
+    return parseVersion(r.stdout) orelse parseVersion(r.stderr);
+}
+
+/// Starts the helper unless one is already asking this binary. Returns
+/// whether a helper is (now) at work.
+fn startHelper(ctx: *const Context, arena: Allocator, dir: []const u8, key: []const u8, exe: []const u8, args: []const []const u8) bool {
+    const io = ctx.io;
+    const cwd = Io.Dir.cwd();
+    cwd.createDirPath(io, dir) catch return false;
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const pending = pendingPath(&buf, dir, key) orelse return false;
+    const file = cwd.createFile(io, pending, .{ .exclusive = true }) catch |e| switch (e) {
+        error.PathAlreadyExists => {
+            // A helper is at work, unless it died long ago.
+            const st = cwd.statFile(io, pending, .{}) catch return false;
+            const age_ns = Io.Clock.real.now(io).nanoseconds - st.mtime.nanoseconds;
+            if (age_ns < helper_timeout_ms * std.time.ns_per_ms + std.time.ns_per_s) return true;
+            cwd.deleteFile(io, pending) catch {};
+            return false; // the next prompt starts a new one
+        },
+        else => return false,
+    };
+    file.close(io);
+
+    var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = std.process.executablePath(io, &exe_buf) catch return giveUp(io, pending);
+    var argv: std.ArrayList([]const u8) = .empty;
+    argv.appendSlice(arena, &.{ exe_buf[0..n], "__probe-version", dir, key, ctx.physical_cwd, exe }) catch return giveUp(io, pending);
+    argv.appendSlice(arena, args) catch return giveUp(io, pending);
+    _ = std.process.spawn(io, .{
+        .argv = argv.items,
+        .cwd = .{ .path = ctx.physical_cwd },
+        // Never hold the shell's command substitution open.
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    }) catch return giveUp(io, pending);
+    // Not waited for: it runs on after this prompt is printed.
+    return true;
+}
+
+fn giveUp(io: Io, pending: []const u8) bool {
+    Io.Dir.cwd().deleteFile(io, pending) catch {};
+    return false;
+}
+
+/// Waits for the helper's answer. The module's deadline cuts this short;
+/// then the answer is for the next prompt.
+fn awaitHelper(io: Io, arena: Allocator, dir: []const u8, key: []const u8) ?[]const u8 {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const pending = pendingPath(&buf, dir, key) orelse return null;
+    const start = Io.Clock.awake.now(io);
+    while (start.durationTo(Io.Clock.awake.now(io)).toMilliseconds() < probe_timeout_ms) {
+        io.sleep(.fromMilliseconds(3), .awake) catch return null;
+        if (readCache(io, arena, dir, key)) |v| return v;
+        // Done without an answer (the tool failed or printed no version).
+        Io.Dir.cwd().access(io, pending, .{}) catch return readCache(io, arena, dir, key);
+    }
+    return null;
+}
+
+fn pendingPath(buf: []u8, dir: []const u8, key: []const u8) ?[]const u8 {
+    return std.fmt.bufPrint(buf, "{s}/{x:0>16}.pending", .{ dir, std.hash.Wyhash.hash(0, key) }) catch null;
+}
+
+/// `buta __probe-version <cache dir> <key> <cwd> <exe> [args...]`: runs
+/// the tool, writes its version to the cache and removes the `.pending`
+/// file. Started by `probe`; not meant to be run by hand.
+pub fn probeMain(io: Io, args: []const []const u8) u8 {
+    if (args.len < 4) return 2;
+    const dir, const key, const cwd, const exe = .{ args[0], args[1], args[2], args[3] };
+    var arena_state: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    defer if (pendingPath(&buf, dir, key)) |p| Io.Dir.cwd().deleteFile(io, p) catch {};
+    const version = (runTool(io, arena, cwd, exe, args[4..], helper_timeout_ms) catch return 1) orelse return 1;
+    writeCache(io, arena, dir, key, version);
+    return 0;
+}
+
+/// How long a prompt waits for the helper (the module's deadline usually
+/// ends the wait sooner), and how long the helper waits for the tool.
 const probe_timeout_ms = 2000;
+const helper_timeout_ms = 30_000;
 
 /// A shim's answer depends on where it runs, not on the shim itself.
 fn isShim(exe: []const u8) bool {

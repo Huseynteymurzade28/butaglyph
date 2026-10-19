@@ -81,6 +81,11 @@ fn run(io: Io, env: env_mod.Env, args: anytype, out: *Io.Writer, err: *Io.Writer
         .preset => |p| return if (p.install) installPreset(io, env, p.name.?, out, err) else printPreset(p.name, out, err),
         .preview => |name| preview(io, env, name, out, err),
         .config => |opts| return configEditor(io, env, opts, out, err),
+        .probe_version => {
+            var rest: std.ArrayList([]const u8) = .empty;
+            while (args.next()) |a| try rest.append(std.heap.page_allocator, a);
+            return @import("modules/lang.zig").probeMain(io, rest.items);
+        },
     }
     return 0;
 }

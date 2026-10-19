@@ -238,9 +238,10 @@ different answer in each directory without changing on disk, so they are
 asked on every prompt.
 
 The first prompt in a new project waits for that one run, up to the
-module's deadline. A tool that takes longer than the deadline is left out
-of that prompt and asked again on the next one, so raise `timeout_ms` for
-that module if this keeps happening.
+module's deadline. The tool runs in a small helper process of its own,
+which outlives the prompt: a tool slower than the deadline is left out of
+that one prompt, and the next one finds its answer in the cache. It is
+asked only once either way.
 
 ### Context modules
 

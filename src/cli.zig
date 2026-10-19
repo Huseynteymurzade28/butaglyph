@@ -29,6 +29,9 @@ pub const Command = union(enum) {
     preview: ?[]const u8,
     /// The configuration editor in the browser.
     config: webconfig.Options,
+    /// Internal: ask a tool for its version for the version cache (see
+    /// modules/lang.zig). The remaining arguments are read by the caller.
+    probe_version,
     version,
     help,
 };
@@ -100,6 +103,7 @@ pub fn parse(args: anytype) Error!Command {
         if (p.install and p.name == null) return error.UnexpectedArgument;
         return .{ .preset = p };
     }
+    if (eql(cmd, "__probe-version")) return .probe_version;
     if (eql(cmd, "config")) {
         var o: webconfig.Options = .{};
         while (args.next()) |arg| {
