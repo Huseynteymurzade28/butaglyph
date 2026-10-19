@@ -14,6 +14,9 @@ segments and ornaments. The command is `buta`.
 * **Knows your project.** Python (and its virtual environment), Node.js,
   Rust, Go and Zig versions, shown only where they matter, read from
   files or asked once and cached.
+* **Knows where commands run.** AWS profile and region, Docker
+  context, Kubernetes context and namespace, read from their config
+  files.
 * **Exact git status.** Staged, modified, deleted, conflicted and
   untracked files, ahead and behind, checked against the real `git status`.
 

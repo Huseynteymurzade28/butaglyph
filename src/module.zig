@@ -51,6 +51,9 @@ pub const Id = enum {
     rust,
     go,
     zig,
+    docker_context,
+    kubernetes,
+    aws,
 };
 
 /// How expensive `compute` is.
@@ -79,8 +82,8 @@ pub fn scopeOf(comptime M: type) Scope {
 
 /// Batched modules are computed one after another on a single worker
 /// thread, in `Id` order. They are the ones that usually find nothing to
-/// show after a few `stat` calls (the language modules, outside their
-/// projects), where a thread each would cost more than the work. Each
+/// show after a few `stat` calls or file reads (the language and context
+/// modules), where a thread each would cost more than the work. Each
 /// still has its own deadline.
 pub fn batched(comptime M: type) bool {
     return M.cost == .expensive and @hasDecl(M, "batch") and M.batch;
@@ -101,6 +104,9 @@ pub const impls = struct {
     pub const rust = @import("modules/rust.zig");
     pub const go = @import("modules/go.zig");
     pub const zig = @import("modules/zig.zig");
+    pub const docker_context = @import("modules/docker_context.zig");
+    pub const kubernetes = @import("modules/kubernetes.zig");
+    pub const aws = @import("modules/aws.zig");
 };
 
 pub fn Impl(comptime id: Id) type {
@@ -122,6 +128,9 @@ pub const Data = union(Id) {
     rust: impls.rust.Data,
     go: impls.go.Data,
     zig: impls.zig.Data,
+    docker_context: impls.docker_context.Data,
+    kubernetes: impls.kubernetes.Data,
+    aws: impls.aws.Data,
 };
 
 pub const id_count = @typeInfo(Id).@"enum".fields.len;

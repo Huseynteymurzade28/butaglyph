@@ -474,3 +474,39 @@ test "an active virtual environment shows its version and name" {
     var buf: [256]u8 = undefined;
     try testing.expectEqualStrings("py v3.11.4 (demo)", visible(r.stdout, &buf));
 }
+
+test "docker, kubernetes and aws contexts come from their config files" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try makeFixture(&tmp);
+    defer gpa.free(root);
+    try tmp.dir.createDirPath(io, "docker");
+    try tmp.dir.writeFile(io, .{ .sub_path = "docker/config.json", .data = "{\"auths\":{},\"currentContext\":\"remote\"}" });
+    // The first file sets current-context; the second defines that context.
+    try tmp.dir.writeFile(io, .{ .sub_path = "kube-a", .data = "apiVersion: v1\ncurrent-context: prod\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "kube-b", .data = "contexts:\n- context:\n    cluster: c\n    namespace: payments\n  name: prod\ncurrent-context: other\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "aws-config", .data = "[default]\nregion = us-east-1\n[profile ops]\nregion = eu-west-1\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "cfg.zon", .data = ".{ .glyphs = .ascii, .order = .{ .docker_context, .kubernetes, .aws }, .daemon = .off, .timeout_ms = 2000 }" });
+
+    const docker = try std.fs.path.join(gpa, &.{ root, "docker" });
+    defer gpa.free(docker);
+    const kube = try std.fmt.allocPrint(gpa, "{s}/kube-a{s}{s}/kube-b", .{ root, if (builtin.os.tag == .windows) ";" else ":", root });
+    defer gpa.free(kube);
+    const aws = try std.fs.path.join(gpa, &.{ root, "aws-config" });
+    defer gpa.free(aws);
+    const cfg = try std.fs.path.join(gpa, &.{ root, "cfg.zon" });
+    defer gpa.free(cfg);
+
+    const r = try run(&.{ try butaPath(), "prompt" }, root, &.{
+        .{ "DOCKER_CONFIG", docker }, .{ "KUBECONFIG", kube }, .{ "AWS_CONFIG_FILE", aws },
+        .{ "AWS_PROFILE", "ops" },    .{ "BUTA_CONFIG", cfg },
+    });
+    defer r.deinit();
+    var buf: [256]u8 = undefined;
+    try testing.expectEqualStrings("docker remote k8s prod (payments) aws ops (eu-west-1)", visible(r.stdout, &buf));
+
+    // Nothing set: all three stay hidden.
+    const quiet = try run(&.{ try butaPath(), "prompt" }, root, &.{.{ "BUTA_CONFIG", cfg }});
+    defer quiet.deinit();
+    try testing.expectEqualStrings("", visible(quiet.stdout, &buf));
+}

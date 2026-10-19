@@ -24,6 +24,9 @@ pub const Glyphs = struct {
     rust: []const u8,
     go: []const u8,
     zig: []const u8,
+    docker: []const u8,
+    kubernetes: []const u8,
+    aws: []const u8,
 };
 
 /// The default: standard Unicode only, no Private Use Area. A terminal
@@ -49,6 +52,9 @@ pub const unicode: Glyphs = .{
     .rust = "rs ",
     .go = "go ",
     .zig = "zig ",
+    .docker = "docker ",
+    .kubernetes = "\u{2388} ", // ⎈ (helm)
+    .aws = "aws ",
 };
 
 /// Icons from the Private Use Area: needs a Nerd Font
@@ -73,6 +79,9 @@ pub const nerd: Glyphs = .{
     .rust = "\u{e7a8} ", // nf-dev-rust
     .go = "\u{e627} ", // nf-seti-go
     .zig = "\u{e6a9} ", // nf-seti-zig
+    .docker = "\u{f308} ", // nf-linux-docker
+    .kubernetes = "\u{2388} ", // ⎈ (helm)
+    .aws = "\u{e33d} ", // nf-dev-aws
 };
 
 /// Pure 7-bit ASCII for terminals or fonts without extra glyphs.
@@ -96,6 +105,9 @@ pub const ascii: Glyphs = .{
     .rust = "rs ",
     .go = "go ",
     .zig = "zig ",
+    .docker = "docker ",
+    .kubernetes = "k8s ",
+    .aws = "aws ",
 };
 
 pub fn get(set: Set) *const Glyphs {

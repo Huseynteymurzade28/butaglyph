@@ -246,6 +246,14 @@ the daemon.
   the toolchain leaves one, and otherwise asked once and cached on disk.
   The modules share one worker thread, so with all five in the default
   order a prompt costs no more than before.
+* **Phase 7 (done): no font dependency, and contexts.** The default
+  glyphs and every preset use standard Unicode only (block elements for
+  segment shapes), and Nerd Font icons are opt-in. New modules: `aws`,
+  `docker_context` and `kubernetes`, read from their config files without
+  running any CLI.
+
+Planned work and known gaps are tracked in
+[GitHub issues](https://github.com/Huseynteymurzade28/butaglyph/issues).
 
 Known gaps:
 

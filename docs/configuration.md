@@ -20,7 +20,7 @@ config never costs you the prompt.
     // .unicode (default, any font), .nerd (icons, needs a Nerd Font) or .ascii
     .glyphs = .unicode,
     // Modules in display order; modules left out are never computed.
-    .order = .{ .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .duration, .status, .jobs, .line_break, .character },
+    .order = .{ .dir, .git_branch, .git_status, .python, .node, .rust, .go, .zig, .aws, .duration, .status, .jobs, .line_break, .character },
     .separator = " ",
     // Deadline for expensive modules (git, languages), in ms from prompt start.
     .timeout_ms = 100,
@@ -141,6 +141,9 @@ powerline chevron, with a Nerd Font). The root of an absolute path stays
 | `rust`       | The active rustup toolchain's `rustc` version, in a Cargo project | `symbol`, `version_prefix`, `detect`, `timeout_ms` |
 | `go`         | Go version, in a Go module or workspace                       | `symbol`, `version_prefix`, `detect`, `timeout_ms` |
 | `zig`        | Zig version, in a Zig project                                 | `symbol`, `version_prefix`, `detect`, `timeout_ms` |
+| `aws`        | The AWS profile and region set in this shell                  | `symbol`, `show_region`, `timeout_ms` |
+| `docker_context` | The Docker context, unless it is `default`. Not in the default order | `symbol`, `timeout_ms` |
+| `kubernetes` | The Kubernetes context and its namespace. Not in the default order | `symbol`, `show_namespace`, `timeout_ms` |
 
 Every module except `line_break` and `text` has a `style` (or
 `success_style`/`failure_style`) and a `symbol` override; leaving `symbol`
@@ -196,6 +199,32 @@ The first prompt in a new project waits for that one run, up to the
 module's deadline. A tool that takes longer than the deadline is left out
 of that prompt and asked again on the next one, so raise `timeout_ms` for
 that module if this keeps happening.
+
+### Context modules
+
+`aws`, `docker_context` and `kubernetes` show where your commands will
+run. They read the same files and variables as the CLIs and never run
+them:
+
+* **`aws`**: `$AWS_PROFILE` (or `$AWS_DEFAULT_PROFILE`, or aws-vault's
+  `$AWS_VAULT`) and `$AWS_REGION` (or `$AWS_DEFAULT_REGION`). If no region
+  is set in the environment, the region comes from the profile's section
+  in `~/.aws/config` (`$AWS_CONFIG_FILE`). The module is hidden unless a
+  profile or a region is set in your shell.
+* **`docker_context`**: `$DOCKER_CONTEXT`, else `currentContext` in
+  `~/.docker/config.json` (`$DOCKER_CONFIG`). Hidden for `default`.
+* **`kubernetes`**: `current-context` from `$KUBECONFIG` (merged the way
+  kubectl merges it) or `~/.kube/config`, with that context's namespace.
+  Only the block-style YAML that kubectl writes is understood.
+
+`docker_context` and `kubernetes` are not in the default order, because
+a Docker Desktop install or an old kubeconfig would show them everywhere.
+Add them to `.order` if you want them:
+
+```zig
+.order = .{ .dir, .git_branch, .git_status, .kubernetes, .line_break, .character },
+.kubernetes = .{ .style = .{ .fg = "#326ce5" }, .show_namespace = true },
+```
 
 Set `BUTA_DEBUG=1` to have modules report their errors and missed
 deadlines on stderr.
