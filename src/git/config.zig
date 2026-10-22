@@ -1,7 +1,8 @@
 //! A small git-config reader: enough to look up single values such as
 //! `branch.<name>.remote`. Section and key names are case-insensitive,
 //! subsection names case-sensitive; the last occurrence of a key wins.
-//! `[include]` directives are not followed.
+//! `[include]` and `[includeIf]` are listed by `includes`; following them
+//! is up to the caller (see status.zig), since conditions need the repository.
 
 const std = @import("std");
 
@@ -35,6 +36,102 @@ pub const Config = struct {
         return result;
     }
 };
+
+/// An `[include]` or `[includeIf "<condition>"]` section's `path`.
+pub const Include = struct {
+    /// null for `[include]`.
+    condition: ?[]const u8,
+    path: []const u8,
+    /// Offset just past the line that names it: the included file's
+    /// settings count as if they were written there.
+    end: usize,
+    /// The section header in effect at `end`, for reading the rest of the
+    /// file on its own.
+    header: []const u8,
+};
+
+/// The include paths of `c`, in file order.
+pub fn includes(c: Config, arena: std.mem.Allocator) ![]const Include {
+    var list: std.ArrayList(Include) = .empty;
+    var walker: Walker = .{ .text = c.text };
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    while (walker.next()) |line| {
+        const header = parseHeader(walker.header) orelse continue;
+        const condition: ?[]const u8 = if (std.ascii.eqlIgnoreCase(header.name, "include") and header.sub == null)
+            null
+        else if (std.ascii.eqlIgnoreCase(header.name, "includeif") and header.sub != null)
+            try unescapeSubsection(arena, header.sub.?)
+        else
+            continue;
+        const path = matchKey(line, "path", &buf) orelse continue;
+        try list.append(arena, .{ .condition = condition, .path = try arena.dupe(u8, path), .end = walker.pos, .header = walker.header });
+    }
+    return list.items;
+}
+
+/// Appends every `remote.<name>.url` value in `c` to `urls`.
+pub fn remoteUrls(c: Config, arena: std.mem.Allocator, urls: *std.ArrayList([]const u8)) !void {
+    var walker: Walker = .{ .text = c.text };
+    var buf: [4096]u8 = undefined;
+    while (walker.next()) |line| {
+        const header = parseHeader(walker.header) orelse continue;
+        if (!std.ascii.eqlIgnoreCase(header.name, "remote") or header.sub == null) continue;
+        const url = matchKey(line, "url", &buf) orelse continue;
+        try urls.append(arena, try arena.dupe(u8, url));
+    }
+}
+
+/// The key lines of a config file, with the section header each is under.
+const Walker = struct {
+    text: []const u8,
+    /// Offset of the next line.
+    pos: usize = 0,
+    /// The current `[...]` header, brackets included ("" before the first).
+    header: []const u8 = "",
+
+    fn next(w: *Walker) ?[]const u8 {
+        while (w.pos < w.text.len) {
+            const end = std.mem.indexOfScalarPos(u8, w.text, w.pos, '\n') orelse w.text.len;
+            var line = std.mem.trim(u8, w.text[w.pos..end], " \t\r");
+            w.pos = @min(w.text.len, end + 1);
+            if (line.len == 0 or line[0] == '#' or line[0] == ';') continue;
+            if (line[0] == '[') {
+                const close = std.mem.indexOfScalar(u8, line, ']') orelse continue;
+                w.header = line[0 .. close + 1];
+                // A header may be followed by a key on the same line.
+                line = std.mem.trim(u8, line[close + 1 ..], " \t");
+                if (line.len == 0) continue;
+            }
+            return line;
+        }
+        return null;
+    }
+};
+
+const Header = struct { name: []const u8, sub: ?[]const u8 };
+
+/// `[name "sub"]` (sub still quoted-escaped), `[name.sub]` or `[name]`.
+fn parseHeader(header: []const u8) ?Header {
+    if (header.len < 2) return null;
+    const inner = std.mem.trim(u8, header[1 .. header.len - 1], " \t");
+    if (std.mem.indexOfScalar(u8, inner, '"')) |q| {
+        const end = std.mem.lastIndexOfScalar(u8, inner, '"') orelse return null;
+        if (end <= q) return null;
+        return .{ .name = std.mem.trim(u8, inner[0..q], " \t"), .sub = inner[q + 1 .. end] };
+    }
+    if (std.mem.indexOfScalar(u8, inner, '.')) |dot| return .{ .name = inner[0..dot], .sub = inner[dot + 1 ..] };
+    return .{ .name = inner, .sub = null };
+}
+
+fn unescapeSubsection(arena: std.mem.Allocator, quoted: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    while (i < quoted.len) : (i += 1) {
+        if (quoted[i] == '\\' and i + 1 < quoted.len) i += 1;
+        try out.append(arena, quoted[i]);
+    }
+    return out.items;
+}
 
 fn matchHeader(line: []const u8, section: []const u8, subsection: ?[]const u8) bool {
     const close = std.mem.indexOfScalar(u8, line, ']') orelse return false;
@@ -154,4 +251,44 @@ test Config {
     try std.testing.expectEqualStrings("false", c.get("core", null, "bare", &buf).?);
     try std.testing.expectEqual(@as(?[]const u8, null), c.get("branch", "nope", "remote", &buf));
     try std.testing.expectEqual(@as(?[]const u8, null), c.get("core", null, "missing", &buf));
+}
+
+test includes {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const text =
+        \\[core]
+        \\    x = 1
+        \\[include]
+        \\    path = a.inc
+        \\    path = "~/b.inc"
+        \\[includeIf "gitdir:~/work/"] path = c.inc
+        \\[includeIf "onbranch:feat/\"x\""]
+        \\    path = d.inc
+        \\[includeIf]
+        \\    path = ignored
+        \\[remote "origin"]
+        \\    url = https://example.com/r.git
+        \\[remote "up"]
+        \\    url = git@example.com:r.git
+        \\
+    ;
+    const c: Config = .{ .text = text };
+    const list = try includes(c, arena);
+    try std.testing.expectEqual(@as(usize, 4), list.len);
+    try std.testing.expectEqual(@as(?[]const u8, null), list[0].condition);
+    try std.testing.expectEqualStrings("a.inc", list[0].path);
+    try std.testing.expectEqualStrings("[include]", list[0].header);
+    try std.testing.expectEqualStrings("~/b.inc", list[1].path);
+    try std.testing.expectEqualStrings("gitdir:~/work/", list[2].condition.?);
+    try std.testing.expectEqualStrings("c.inc", list[2].path);
+    try std.testing.expectEqualStrings("onbranch:feat/\"x\"", list[3].condition.?);
+    try std.testing.expect(std.mem.startsWith(u8, text[list[0].end..], "    path = \"~/b.inc\""));
+    try std.testing.expect(std.mem.startsWith(u8, text[list[3].end..], "[includeIf]"));
+
+    var urls: std.ArrayList([]const u8) = .empty;
+    try remoteUrls(c, arena, &urls);
+    try std.testing.expectEqual(@as(usize, 2), urls.items.len);
+    try std.testing.expectEqualStrings("git@example.com:r.git", urls.items[1]);
 }

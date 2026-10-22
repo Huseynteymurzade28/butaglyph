@@ -8,6 +8,8 @@ const module = @import("../module.zig");
 const Context = @import("../context.zig").Context;
 const Glyphs = @import("../glyphs.zig").Glyphs;
 const render_mod = @import("../render.zig");
+const lang = @import("lang.zig");
+const env = @import("../env.zig");
 const Line = render_mod.Line;
 
 pub const id: module.Id = .git_status;
@@ -45,7 +47,7 @@ pub fn compute(ctx: *const Context, cfg: *const Config, arena: std.mem.Allocator
         .worktree = cfg.worktree,
         .untracked = cfg.untracked,
         .ahead_behind = cfg.ahead_behind,
-        .global = globalFiles(ctx),
+        .global = try globalFiles(ctx, arena),
     });
     const ahead = st.ahead orelse 0;
     const behind = st.behind orelse 0;
@@ -53,13 +55,25 @@ pub fn compute(ctx: *const Context, cfg: *const Config, arena: std.mem.Allocator
     return st;
 }
 
-/// Where git looks for the user's global config and excludes.
-pub fn globalFiles(ctx: *const Context) git.status.Global {
+/// Where git looks for the user's global and system config and excludes.
+pub fn globalFiles(ctx: *const Context, arena: std.mem.Allocator) !git.status.Global {
     return .{
         .home = ctx.home,
         .xdg_config_home = ctx.getEnv("XDG_CONFIG_HOME"),
         .config_global = ctx.getEnv("GIT_CONFIG_GLOBAL"),
+        .system = try systemFile(ctx, arena),
     };
+}
+
+/// $GIT_CONFIG_SYSTEM, else the file next to the `git` in $PATH, unless
+/// $GIT_CONFIG_NOSYSTEM is set.
+fn systemFile(ctx: *const Context, arena: std.mem.Allocator) !?[]const u8 {
+    if (ctx.getEnv("GIT_CONFIG_NOSYSTEM")) |v| {
+        for ([_][]const u8{ "1", "true", "yes", "on" }) |t| if (std.ascii.eqlIgnoreCase(v, t)) return null;
+    }
+    if (ctx.getEnv("GIT_CONFIG_SYSTEM")) |p| return if (p.len > 0) p else null;
+    const exe = if (try lang.which(ctx, arena, "git")) |e| env.toSlashes(try arena.dupe(u8, e)) else null;
+    return git.status.systemConfig(arena, exe, env.is_windows);
 }
 
 pub fn render(data: *const Data, cfg: *const Config, g: *const Glyphs, line: *Line) Line.Error!void {

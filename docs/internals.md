@@ -118,7 +118,11 @@ that happens and the daemon's own executable has been replaced on disk
   Untracked files come from a walk of the work tree that never enters an
   ignored directory, with a port of git's `wildmatch` and its precedence
   rules (nested `.gitignore` files, `info/exclude`, `core.excludesFile`).
-  Staged renames are found with git's own similarity estimate and pairing
+  Configuration comes from the system file (next to the `git` in `$PATH`,
+  or `$GIT_CONFIG_SYSTEM`), the global files and the repository, with
+  `[include]` and `[includeIf]` followed (`gitdir`, `gitdir/i`, `onbranch`
+  and `hasconfig:remote.*.url`), each included file counting where it is
+  included. Staged renames are found with git's own similarity estimate and pairing
   order (exact matches, then unique file names, then the best-scoring
   pairs at 50% or more). Ahead/behind uses git's date-ordered merge-base paint. The test suite
   compares every result with the real `git status` and `git rev-list` on
@@ -165,7 +169,7 @@ src/
     delta.zig        git's binary delta format
     object.zig       commit and tree parsing
     index.zig        index v2-v4 and the cache-tree extension
-    config.zig       a small git-config reader
+    config.zig       a small git-config reader (and include paths)
     ignore.zig       .gitignore rules and wildmatch
     untracked.zig    the work tree walk for untracked files
     status.zig       staged/modified/deleted/conflicted/untracked, ahead/behind
@@ -272,7 +276,6 @@ Known gaps:
 * clean/smudge filters (autocrlf, LFS) are not applied when hashing (on
   Windows with `core.autocrlf`, a file whose stat data changed but whose
   content didn't may show as modified until git refreshes the index);
-* the system git config (`/etc/gitconfig`) and `[include]` are not read;
 * not supported: SHA-256 repositories, reftable, split or sparse indexes,
   and object alternates. In any of these cases the module renders as empty;
 * no daemon on Windows yet; prompts there are computed directly;

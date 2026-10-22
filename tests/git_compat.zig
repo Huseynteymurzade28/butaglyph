@@ -13,6 +13,8 @@ const Fixture = struct {
     root: [:0]u8,
     arena_state: std.heap.ArenaAllocator,
     quiet: bool = false,
+    /// A system config file, for git ($GIT_CONFIG_SYSTEM) and for us.
+    system: ?[]const u8 = null,
 
     fn init() !Fixture {
         if (!haveGit()) return error.SkipZigTest;
@@ -43,7 +45,7 @@ const Fixture = struct {
         var env: std.process.Environ.Map = .init(f.arena());
         try env.put("PATH", testPath());
         try env.put("HOME", f.root);
-        try env.put("GIT_CONFIG_NOSYSTEM", "1");
+        if (f.system) |p| try env.put("GIT_CONFIG_SYSTEM", p) else try env.put("GIT_CONFIG_NOSYSTEM", "1");
         try env.put("GIT_CONFIG_GLOBAL", "/dev/null");
         try env.put("GIT_AUTHOR_NAME", "T");
         try env.put("GIT_AUTHOR_EMAIL", "t@example.com");
@@ -77,7 +79,7 @@ const Fixture = struct {
     fn ours(f: *Fixture, sub: []const u8) !git.Status {
         const repo = (try git.repo.discover(io, f.arena(), try f.path(sub))).?;
         // The same global files git sees: none but the fixture's own.
-        return git.status.compute(io, f.arena(), repo, .{ .global = .{ .home = f.root, .config_global = "/dev/null" } });
+        return git.status.compute(io, f.arena(), repo, .{ .global = .{ .home = f.root, .config_global = "/dev/null", .system = f.system } });
     }
 
     /// git's view, from porcelain v2 (renames and untracked files as the
@@ -475,6 +477,99 @@ test "untracked files: random trees and rules match git" {
         _ = try f.run("r", &.{ "config", "status.showUntrackedFiles", "all" });
         try f.expectSame("r", label);
     }
+}
+
+test "config includes and the system config match git" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    _ = try f.run("", &.{ "init", "-q", "-b", "main", "r" });
+    try f.write("r/tracked.txt", "t\n");
+    _ = try f.run("r", &.{ "add", "-A" });
+    _ = try f.run("r", &.{ "commit", "-qm", "base" });
+    try f.write("r/new/a.txt", "x\n");
+    try f.write("r/new/b.md", "x\n");
+    try f.write("r/c.md", "x\n");
+    try f.expectSame("r", "no includes");
+    const base = try f.ours("r");
+
+    // A plain include, relative to the including file; later settings win.
+    try f.write("r/.git/no.inc", "[status]\n\tshowUntrackedFiles = no\n");
+    try f.write("r/.git/all.inc", "[status]\n\tshowUntrackedFiles = all\n");
+    const config = try f.tmp.dir.readFileAlloc(io, "r/.git/config", f.arena(), .unlimited);
+    try f.write("r/.git/config", try std.mem.concat(f.arena(), u8, &.{ config, "[include]\n\tpath = no.inc\n" }));
+    try f.expectSame("r", "include");
+    try testing.expectEqual(@as(u32, 0), (try f.ours("r")).untracked);
+    try f.write("r/.git/config", try std.mem.concat(f.arena(), u8, &.{ config, "[include]\n\tpath = no.inc\n[status]\n\tshowUntrackedFiles = all\n" }));
+    try f.expectSame("r", "set after the include");
+    try f.write("r/.git/config", try std.mem.concat(f.arena(), u8, &.{ config, "[status]\n\tshowUntrackedFiles = all\n[include]\n\tpath = no.inc\n" }));
+    try f.expectSame("r", "set before the include");
+    try f.write("r/.git/config", try std.mem.concat(f.arena(), u8, &.{ config, "[include]\n\tpath = missing.inc\n\tpath = all.inc\n" }));
+    try f.expectSame("r", "missing include, then another");
+    try testing.expect((try f.ours("r")).untracked > base.untracked);
+
+    // Nested, through ~/.
+    try f.write("home.inc", "[include]\n\tpath = .git/no.inc\n");
+    try f.write("r/.git/nest.inc", "[include]\n\tpath = ~/home.inc\n");
+    _ = try f.run("", &.{ "init", "-q", "-b", "main", "h" }); // for ~/.git/no.inc
+    try f.write(".git/no.inc", "[status]\n\tshowUntrackedFiles = no\n");
+    try f.write("r/.git/config", try std.mem.concat(f.arena(), u8, &.{ config, "[include]\n\tpath = nest.inc\n" }));
+    try f.expectSame("r", "nested via ~/");
+    try testing.expectEqual(@as(u32, 0), (try f.ours("r")).untracked);
+
+    // includeIf conditions, each one holding and failing.
+    const root_r = try f.path("r");
+    const conds = [_][]const u8{
+        try std.fmt.allocPrint(f.arena(), "gitdir:{s}/", .{root_r}),
+        try std.fmt.allocPrint(f.arena(), "gitdir:{s}/.git", .{root_r}),
+        "gitdir:r/",
+        "gitdir:other/",
+        "gitdir:R/",
+        "gitdir/i:R/",
+        "gitdir:**/r/.git",
+        "gitdir:./",
+        "gitdir:~/r/",
+        "onbranch:main",
+        "onbranch:ma*",
+        "onbranch:feature/",
+        "onbranch:other",
+        "hasconfig:remote.*.url:https://example.com/**",
+        "hasconfig:remote.*.url:https://elsewhere/**",
+        "nosuchcondition:x",
+    };
+    try f.write("r/.git/config", config);
+    _ = try f.run("r", &.{ "remote", "add", "origin", "https://example.com/r.git" });
+    const with_remote = try f.tmp.dir.readFileAlloc(io, "r/.git/config", f.arena(), .unlimited);
+    var held: usize = 0;
+    for (conds) |c| {
+        const inc = try std.fmt.allocPrint(f.arena(), "[includeIf \"{s}\"]\n\tpath = no.inc\n", .{c});
+        try f.write("r/.git/config", try std.mem.concat(f.arena(), u8, &.{ with_remote, inc }));
+        try f.expectSame("r", c);
+        if ((try f.ours("r")).untracked == 0) held += 1;
+    }
+    // Held: both absolute gitdirs, r/, gitdir/i:R/, **/r/.git, ~/r/, main, ma*, example.com.
+    try testing.expectEqual(@as(usize, 9), held);
+    _ = try f.run("r", &.{ "checkout", "-qb", "feature/x" });
+    try f.write("r/.git/config", try std.mem.concat(f.arena(), u8, &.{ with_remote, "[includeIf \"onbranch:feature/\"]\n\tpath = no.inc\n" }));
+    try f.expectSame("r", "onbranch: a branch directory");
+    try testing.expectEqual(@as(u32, 0), (try f.ours("r")).untracked);
+
+    // A linked worktree has its own git dir.
+    _ = try f.run("r", &.{ "worktree", "add", "-q", "-b", "wt", "../w" });
+    try f.write("w/u.txt", "x\n");
+    try f.write("r/.git/config", try std.mem.concat(f.arena(), u8, &.{ with_remote, "[includeIf \"gitdir:**/worktrees/**\"]\n\tpath = no.inc\n" }));
+    try f.expectSame("w", "worktree gitdir");
+    try f.expectSame("r", "main gitdir");
+    try testing.expectEqual(@as(u32, 0), (try f.ours("w")).untracked);
+
+    // The system config, read first, and its includes.
+    try f.write("r/.git/config", with_remote);
+    try f.write("sys/gitconfig", "[core]\n\texcludesFile = ~/sys.ignore\n[include]\n\tpath = sys.inc\n");
+    try f.write("sys/sys.inc", "[status]\n\tshowUntrackedFiles = all\n");
+    try f.write("sys.ignore", "*.md\n");
+    f.system = try f.path("sys/gitconfig");
+    try f.expectSame("r", "system config");
+    try f.write("r/.git/config", try std.mem.concat(f.arena(), u8, &.{ with_remote, "[status]\n\tshowUntrackedFiles = normal\n" }));
+    try f.expectSame("r", "repository config over the system's");
 }
 
 test "staged renames match git" {

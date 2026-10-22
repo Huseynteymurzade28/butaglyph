@@ -7,9 +7,10 @@
 //! * untracked:  see untracked.zig
 //! * ahead / behind: commits on each side of HEAD...upstream
 //!
-//! Configuration is read from the repository and the user's global files
-//! (`~/.gitconfig`, `$XDG_CONFIG_HOME/git/config`, or `$GIT_CONFIG_GLOBAL`),
-//! not from the system file, and `[include]` is not followed.
+//! Configuration is read from the repository, the user's global files
+//! (`~/.gitconfig`, `$XDG_CONFIG_HOME/git/config`, or `$GIT_CONFIG_GLOBAL`)
+//! and the system file, following `[include]` and `[includeIf]` (gitdir,
+//! gitdir/i, onbranch and hasconfig:remote.*.url conditions).
 //! Staged renames are detected as git does (see rename.zig), following
 //! `status.renames`/`diff.renames` and `status.renameLimit`/`diff.renameLimit`;
 //! `copies` is taken as plain renames. Clean/smudge filters (autocrlf, LFS)
@@ -24,7 +25,8 @@ const refs = @import("refs.zig");
 const object = @import("object.zig");
 const index_mod = @import("index.zig");
 const odb_mod = @import("odb.zig");
-const GitConfig = @import("config.zig").Config;
+const config_mod = @import("config.zig");
+const GitConfig = config_mod.Config;
 const ignore = @import("ignore.zig");
 const untracked_mod = @import("untracked.zig");
 const rename = @import("rename.zig");
@@ -65,6 +67,8 @@ pub const Global = struct {
     xdg_config_home: ?[]const u8 = null,
     /// $GIT_CONFIG_GLOBAL: replaces both global config files.
     config_global: ?[]const u8 = null,
+    /// The system config file (see `systemConfig`), or null for none.
+    system: ?[]const u8 = null,
 
     /// The global config files, highest precedence first.
     pub fn configFiles(g: Global, arena: Allocator) ![]const []const u8 {
@@ -99,20 +103,49 @@ pub const Global = struct {
     }
 };
 
-/// The files outside the repository that status depends on: the global
-/// config files and the global excludes file (whether or not they exist).
+/// Where git's system config is, for the `git` found in $PATH: git looks
+/// in `<prefix>/etc/gitconfig`, where `<prefix>/bin` holds git (`/etc` for
+/// `/usr`). Git for Windows keeps it in `<install>/etc/gitconfig` and puts
+/// `git.exe` in `cmd`, `bin` or `mingw64/bin`. Paths use `/`.
+pub fn systemConfig(arena: Allocator, git_exe: ?[]const u8, windows: bool) !?[]const u8 {
+    const exe = git_exe orelse return if (windows) null else "/etc/gitconfig";
+    var root = std.fs.path.dirnamePosix(exe) orelse return null;
+    if (windows) {
+        for ([_][]const u8{ "/mingw64/bin", "/bin", "/cmd" }) |sub| {
+            if (std.ascii.endsWithIgnoreCase(root, sub)) {
+                root = root[0 .. root.len - sub.len];
+                break;
+            }
+        } else return null;
+        return try std.fmt.allocPrint(arena, "{s}/etc/gitconfig", .{root});
+    }
+    if (!std.mem.eql(u8, std.fs.path.basenamePosix(root), "bin")) return "/etc/gitconfig";
+    const prefix = std.fs.path.dirnamePosix(root) orelse "/";
+    if (std.mem.eql(u8, prefix, "/") or std.mem.eql(u8, prefix, "/usr")) return "/etc/gitconfig";
+    return try std.fmt.allocPrint(arena, "{s}/etc/gitconfig", .{prefix});
+}
+
+/// The files outside the repository that status depends on: the system and
+/// global config files, the files they include, and the global excludes
+/// file (whether or not they exist).
 pub fn externalFiles(io: Io, arena: Allocator, repo: Repo, global: Global) ![]const []const u8 {
     const configs = try loadConfigs(io, arena, repo, global);
     var list: std.ArrayList([]const u8) = .empty;
-    try list.appendSlice(arena, try global.configFiles(arena));
+    try list.appendSlice(arena, configs.paths);
     if (try global.excludesFile(arena, configs)) |p| try list.append(arena, p);
     return list.items;
 }
 
-/// The repository's config followed by the global ones; the first file
-/// that sets a key wins (git reads them in the opposite order, last wins).
+/// All config, highest precedence first: the first file that sets a key
+/// wins (git reads them in the opposite order, last wins). A file with
+/// includes is cut into pieces around them.
 const Configs = struct {
     files: []const GitConfig,
+    /// The repository's own config file, without includes: where git
+    /// looks for `extensions.*`.
+    repo: GitConfig,
+    /// The config files read or looked for outside the repository.
+    paths: []const []const u8,
 
     fn get(c: Configs, section: []const u8, subsection: ?[]const u8, key: []const u8, buf: []u8) ?[]const u8 {
         for (c.files) |f| if (f.get(section, subsection, key, buf)) |v| return v;
@@ -132,13 +165,161 @@ fn parseBool(v: []const u8) ?bool {
 }
 
 fn loadConfigs(io: Io, arena: Allocator, repo: Repo, global: Global) !Configs {
-    var files: std.ArrayList(GitConfig) = .empty;
-    try files.append(arena, try loadConfig(io, arena, repo));
-    for (try global.configFiles(arena)) |p| {
-        const text = Io.Dir.cwd().readFileAlloc(io, p, arena, .limited(1024 * 1024)) catch continue;
-        try files.append(arena, .{ .text = text });
+    const repo_config = try loadConfig(io, arena, repo);
+    var e: Includes = .{ .io = io, .arena = arena, .repo = repo, .home = global.home };
+    try e.readAll(global, repo_config);
+    if (e.saw_hasconfig) {
+        // hasconfig:remote.*.url looks at the URLs set without such
+        // includes; read everything again knowing them.
+        var urls: std.ArrayList([]const u8) = .empty;
+        for (e.out.items) |c| try config_mod.remoteUrls(c, arena, &urls);
+        e = .{ .io = io, .arena = arena, .repo = repo, .home = global.home, .urls = urls.items };
+        try e.readAll(global, repo_config);
     }
-    return .{ .files = files.items };
+    std.mem.reverse(GitConfig, e.out.items);
+    return .{ .files = e.out.items, .repo = repo_config, .paths = e.paths.items };
+}
+
+/// Reads config files in git's order, following includes.
+const Includes = struct {
+    io: Io,
+    arena: Allocator,
+    repo: Repo,
+    home: ?[]const u8,
+    /// Every remote URL, for hasconfig conditions; null on the first pass.
+    urls: ?[]const []const u8 = null,
+    saw_hasconfig: bool = false,
+    /// Lowest precedence first.
+    out: std.ArrayList(GitConfig) = .empty,
+    paths: std.ArrayList([]const u8) = .empty,
+
+    /// git stops at this depth (with an error).
+    const max_depth = 10;
+
+    fn readAll(e: *Includes, global: Global, repo_config: GitConfig) !void {
+        if (global.system) |p| try e.file(p, 0);
+        const globals = try global.configFiles(e.arena);
+        var i = globals.len;
+        while (i > 0) {
+            i -= 1;
+            try e.file(globals[i], 0);
+        }
+        const repo_path = try std.fmt.allocPrint(e.arena, "{s}/config", .{e.repo.common_dir});
+        try e.contents(repo_path, repo_config.text, 0);
+    }
+
+    fn file(e: *Includes, path: []const u8, depth: u32) Allocator.Error!void {
+        try e.paths.append(e.arena, path);
+        const text = Io.Dir.cwd().readFileAlloc(e.io, path, e.arena, .limited(1024 * 1024)) catch return;
+        try e.contents(path, text, depth);
+    }
+
+    /// Adds `text` (read from `path`), with each included file's settings
+    /// placed where the include is.
+    fn contents(e: *Includes, path: []const u8, data: []const u8, depth: u32) Allocator.Error!void {
+        const incs = try config_mod.includes(.{ .text = data }, e.arena);
+        var start: usize = 0;
+        var header: []const u8 = "";
+        for (incs) |inc| {
+            try e.piece(header, data[start..inc.end]);
+            start = inc.end;
+            header = inc.header;
+            if (depth >= max_depth) continue;
+            const target = try e.resolve(inc.path, path) orelse continue;
+            if (!try e.matches(inc.condition, path)) {
+                // Watched all the same: the condition may hold later.
+                try e.paths.append(e.arena, target);
+                continue;
+            }
+            try e.file(target, depth + 1);
+        }
+        try e.piece(header, data[start..]);
+    }
+
+    fn piece(e: *Includes, header: []const u8, data: []const u8) !void {
+        const t = if (header.len == 0) data else try std.mem.concat(e.arena, u8, &.{ header, "\n", data });
+        try e.out.append(e.arena, .{ .text = t });
+    }
+
+    /// An include path: `~/` is the home directory, and a relative path is
+    /// relative to the including file's directory.
+    fn resolve(e: *Includes, target: []const u8, including: []const u8) !?[]const u8 {
+        if (target.len == 0) return null;
+        if (std.mem.startsWith(u8, target, "~/")) {
+            const h = e.home orelse return null;
+            return try std.fmt.allocPrint(e.arena, "{s}/{s}", .{ h, target[2..] });
+        }
+        if (std.fs.path.isAbsolute(target)) return target;
+        const dir = std.fs.path.dirname(including) orelse ".";
+        return try std.fmt.allocPrint(e.arena, "{s}/{s}", .{ dir, target });
+    }
+
+    fn matches(e: *Includes, condition: ?[]const u8, including: []const u8) !bool {
+        const cond = condition orelse return true;
+        if (std.mem.startsWith(u8, cond, "gitdir:")) return e.gitdir(cond["gitdir:".len..], including, false);
+        if (std.mem.startsWith(u8, cond, "gitdir/i:")) return e.gitdir(cond["gitdir/i:".len..], including, true);
+        if (std.mem.startsWith(u8, cond, "onbranch:")) return e.onBranch(cond["onbranch:".len..]);
+        const has_url = "hasconfig:remote.*.url:";
+        if (std.mem.startsWith(u8, cond, has_url)) {
+            e.saw_hasconfig = true;
+            const urls = e.urls orelse return false;
+            for (urls) |u| if (ignore.wildmatch(cond[has_url.len..], u, .{ .pathname = true })) return true;
+            return false;
+        }
+        return false; // unknown conditions never hold
+    }
+
+    /// git's include_by_gitdir: the pattern is matched against the real
+    /// path of the git dir, then against the path as found.
+    fn gitdir(e: *Includes, cond: []const u8, including: []const u8, icase: bool) !bool {
+        var pat: []const u8 = cond;
+        var prefix: usize = 0;
+        if (std.mem.startsWith(u8, pat, "~/")) {
+            const h = e.home orelse return false;
+            pat = try std.fmt.allocPrint(e.arena, "{s}{s}", .{ h, pat[1..] });
+        }
+        if (std.mem.startsWith(u8, pat, "./")) {
+            const real = e.realPath(including) orelse return false;
+            const dir = std.fs.path.dirname(real) orelse return false;
+            pat = try std.fmt.allocPrint(e.arena, "{s}{s}", .{ dir, pat[1..] });
+            prefix = dir.len + 1;
+        } else if (!std.fs.path.isAbsolute(pat)) {
+            pat = try std.fmt.allocPrint(e.arena, "**/{s}", .{pat});
+        }
+        if (std.mem.endsWith(u8, pat, "/")) pat = try std.fmt.allocPrint(e.arena, "{s}**", .{pat});
+
+        for ([_]?[]const u8{ e.realPath(e.repo.git_dir), e.repo.git_dir }) |candidate| {
+            const t = candidate orelse continue;
+            if (t.len < prefix) continue;
+            const same_prefix = if (icase) std.ascii.eqlIgnoreCase(pat[0..prefix], t[0..prefix]) else std.mem.eql(u8, pat[0..prefix], t[0..prefix]);
+            if (same_prefix and ignore.wildmatch(pat[prefix..], t[prefix..], .{ .pathname = true, .casefold = icase })) return true;
+        }
+        return false;
+    }
+
+    /// With `/` separators, like the rest of the paths here.
+    fn realPath(e: *Includes, path: []const u8) ?[]const u8 {
+        const real = Io.Dir.cwd().realPathFileAlloc(e.io, path, e.arena) catch return null;
+        if (builtin.os.tag == .windows) std.mem.replaceScalar(u8, real, '\\', '/');
+        return real;
+    }
+
+    fn onBranch(e: *Includes, cond: []const u8) !bool {
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const branch = headBranch(e.io, e.repo, &buf) orelse return false;
+        const pat = if (std.mem.endsWith(u8, cond, "/")) try std.fmt.allocPrint(e.arena, "{s}**", .{cond}) else cond;
+        return ignore.wildmatch(pat, branch, .{ .pathname = true });
+    }
+};
+
+/// The branch HEAD points to, or null when detached.
+fn headBranch(io: Io, repo: Repo, buf: []u8) ?[]const u8 {
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const head_path = std.fmt.bufPrint(&path_buf, "{s}/HEAD", .{repo.git_dir}) catch return null;
+    const head = std.mem.trimEnd(u8, Io.Dir.cwd().readFile(io, head_path, buf) catch return null, " \r\n");
+    const prefix = "ref: refs/heads/";
+    if (!std.mem.startsWith(u8, head, prefix)) return null;
+    return head[prefix.len..];
 }
 
 /// How index stat data is compared with the work tree (core.* settings).
@@ -169,7 +350,7 @@ const StatRules = struct {
 
 pub fn compute(io: Io, arena: Allocator, repo: Repo, opts: Options) !Status {
     const configs = try loadConfigs(io, arena, repo, opts.global);
-    const config = configs.files[0];
+    const config = configs.repo;
     var buf: [256]u8 = undefined;
     if (config.get("extensions", null, "objectformat", &buf)) |fmt| {
         if (!std.ascii.eqlIgnoreCase(fmt, "sha1")) return error.UnsupportedObjectFormat;
@@ -606,12 +787,7 @@ fn hashLink(io: Io, dir: Io.Dir, path: []const u8) !Oid {
 
 fn upstreamOid(io: Io, repo: Repo, config: Configs) !?Oid {
     var head_buf: [512]u8 = undefined;
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const head_path = try std.fmt.bufPrint(&path_buf, "{s}/HEAD", .{repo.git_dir});
-    const head = std.mem.trimEnd(u8, Io.Dir.cwd().readFile(io, head_path, &head_buf) catch return null, " \r\n");
-    const prefix = "ref: refs/heads/";
-    if (!std.mem.startsWith(u8, head, prefix)) return null; // detached
-    const branch = head[prefix.len..];
+    const branch = headBranch(io, repo, &head_buf) orelse return null; // detached
 
     var remote_buf: [256]u8 = undefined;
     var merge_buf: [512]u8 = undefined;
@@ -698,6 +874,20 @@ fn allStale(queue: anytype, nodes: *std.AutoHashMapUnmanaged(Oid, Node)) bool {
         if (nodes.get(item.oid).?.flags != 3) return false;
     }
     return true;
+}
+
+test systemConfig {
+    const a = std.testing.allocator;
+    var arena_state: std.heap.ArenaAllocator = .init(a);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try std.testing.expectEqualStrings("/etc/gitconfig", (try systemConfig(arena, "/usr/bin/git", false)).?);
+    try std.testing.expectEqualStrings("/etc/gitconfig", (try systemConfig(arena, null, false)).?);
+    try std.testing.expectEqualStrings("/opt/homebrew/etc/gitconfig", (try systemConfig(arena, "/opt/homebrew/bin/git", false)).?);
+    try std.testing.expectEqualStrings("/nix/store/x-git/etc/gitconfig", (try systemConfig(arena, "/nix/store/x-git/bin/git", false)).?);
+    try std.testing.expectEqualStrings("C:/Program Files/Git/etc/gitconfig", (try systemConfig(arena, "C:/Program Files/Git/cmd/git.exe", true)).?);
+    try std.testing.expectEqualStrings("C:/Program Files/Git/etc/gitconfig", (try systemConfig(arena, "C:/Program Files/Git/mingw64/bin/git.exe", true)).?);
+    try std.testing.expectEqual(@as(?[]const u8, null), try systemConfig(arena, null, true));
 }
 
 test parseLimit {

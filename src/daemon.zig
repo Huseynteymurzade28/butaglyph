@@ -289,7 +289,7 @@ const State = struct {
         var wds: std.ArrayList(i32) = .empty;
         var ok = true;
         const repo: git.Repo = .{ .git_dir = r.git_dir, .common_dir = r.common_dir, .work_tree = r.work_tree };
-        const global = git_status.globalFiles(&s.context(r.work_tree));
+        const global = git_status.globalFiles(&s.context(r.work_tree), arena) catch return false;
 
         // The git side first: once HEAD and the index are watched, a change
         // to them while the rest is set up still invalidates the result.
