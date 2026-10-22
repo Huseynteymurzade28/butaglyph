@@ -276,7 +276,10 @@ const Includes = struct {
         var prefix: usize = 0;
         if (std.mem.startsWith(u8, pat, "~/")) {
             const h = e.home orelse return false;
-            pat = try std.fmt.allocPrint(e.arena, "{s}{s}", .{ h, pat[1..] });
+            const expanded = try std.fmt.allocPrint(e.arena, "{s}{s}", .{ h, pat[1..] });
+            // Git for Windows reads $HOME with `/` separators.
+            if (builtin.os.tag == .windows) std.mem.replaceScalar(u8, expanded[0..h.len], '\\', '/');
+            pat = expanded;
         }
         if (std.mem.startsWith(u8, pat, "./")) {
             const real = e.realPath(including) orelse return false;
