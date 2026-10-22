@@ -11,6 +11,7 @@ pub const config = @import("config.zig");
 pub const status = @import("status.zig");
 pub const ignore = @import("ignore.zig");
 pub const untracked = @import("untracked.zig");
+pub const rename = @import("rename.zig");
 
 pub const Repo = repo.Repo;
 pub const Status = status.Status;

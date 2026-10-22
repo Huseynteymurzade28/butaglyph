@@ -80,10 +80,10 @@ const Fixture = struct {
         return git.status.compute(io, f.arena(), repo, .{ .global = .{ .home = f.root, .config_global = "/dev/null" } });
     }
 
-    /// git's view, from porcelain v2 (no renames; untracked files as the
-    /// repository's status.showUntrackedFiles says).
+    /// git's view, from porcelain v2 (renames and untracked files as the
+    /// repository's config says).
     fn theirs(f: *Fixture, sub: []const u8) !git.Status {
-        const out = try f.run(sub, &.{ "--no-optional-locks", "status", "--porcelain=v2", "--branch", "--no-renames" });
+        const out = try f.run(sub, &.{ "--no-optional-locks", "status", "--porcelain=v2", "--branch" });
         var st: git.Status = .{};
         var lines = std.mem.splitScalar(u8, out, '\n');
         while (lines.next()) |line| {
@@ -91,10 +91,12 @@ const Fixture = struct {
                 var it = std.mem.tokenizeScalar(u8, line["# branch.ab ".len..], ' ');
                 st.ahead = try std.fmt.parseInt(u32, it.next().?[1..], 10);
                 st.behind = try std.fmt.parseInt(u32, it.next().?[1..], 10);
-            } else if (std.mem.startsWith(u8, line, "1 ")) {
+            } else if (std.mem.startsWith(u8, line, "1 ") or std.mem.startsWith(u8, line, "2 ")) {
                 const x = line[2];
                 const y = line[3];
-                if (x != '.') st.staged += 1;
+                if (x == 'R') {
+                    st.renamed += 1;
+                } else if (x != '.') st.staged += 1;
                 switch (y) {
                     'M', 'T', 'A' => st.modified += 1,
                     'D' => st.deleted += 1,
@@ -114,7 +116,7 @@ const Fixture = struct {
         const b = try f.theirs(sub);
         if (!std.meta.eql(a, b)) {
             std.debug.print("[{s}] ours:   {any}\n[{s}] theirs: {any}\n", .{ label, a, label, b });
-            const raw = f.run(sub, &.{ "status", "--porcelain=v2", "--no-renames" }) catch "";
+            const raw = f.run(sub, &.{ "status", "--porcelain=v2" }) catch "";
             const files = f.run(sub, &.{ "ls-files", "-s" }) catch "";
             std.debug.print("git status:\n{s}git ls-files -s:\n{s}\n", .{ raw, files });
             return error.StatusMismatch;
@@ -471,6 +473,103 @@ test "untracked files: random trees and rules match git" {
         const label = try std.fmt.allocPrint(f.arena(), "random tree {d}", .{round});
         try f.expectSame("r", label);
         _ = try f.run("r", &.{ "config", "status.showUntrackedFiles", "all" });
+        try f.expectSame("r", label);
+    }
+}
+
+test "staged renames match git" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    _ = try f.run("", &.{ "init", "-q", "-b", "main", "r" });
+    var text: std.ArrayList(u8) = .empty;
+    for (0..30) |i| try text.print(f.arena(), "line {d} of the original file\n", .{i});
+    try f.write("r/a.txt", text.items);
+    try f.write("r/b.txt", "short\n");
+    try f.write("r/empty", "");
+    try f.write("r/dir/keep.txt", "keep\n");
+    try f.tmp.dir.symLink(io, "a.txt", "r/link", .{});
+    _ = try f.run("r", &.{ "add", "-A" });
+    _ = try f.run("r", &.{ "commit", "-qm", "base" });
+
+    _ = try f.run("r", &.{ "mv", "b.txt", "dir/b2.txt" });
+    try f.expectSame("r", "exact rename");
+    try testing.expectEqual(@as(u32, 1), (try f.ours("r")).renamed);
+
+    _ = try f.run("r", &.{ "mv", "a.txt", "moved.txt" });
+    const edited = try std.mem.replaceOwned(u8, f.arena(), text.items, "line 3 ", "LINE three ");
+    try f.write("r/moved.txt", edited);
+    _ = try f.run("r", &.{ "add", "moved.txt" });
+    try f.write("r/moved.txt", "and modified in the work tree\n");
+    try f.expectSame("r", "edited rename, then modified");
+
+    _ = try f.run("r", &.{ "mv", "empty", "empty2" });
+    _ = try f.run("r", &.{ "mv", "link", "link2" });
+    try f.expectSame("r", "empty file and symlink");
+
+    _ = try f.run("r", &.{ "config", "status.renameLimit", "1" });
+    try f.expectSame("r", "rename limit");
+    _ = try f.run("r", &.{ "config", "status.renames", "false" });
+    try f.expectSame("r", "renames off");
+    try testing.expectEqual(@as(u32, 0), (try f.ours("r")).renamed);
+    _ = try f.run("r", &.{ "config", "--unset", "status.renames" });
+    _ = try f.run("r", &.{ "config", "diff.renames", "false" });
+    try f.expectSame("r", "diff.renames off");
+}
+
+test "staged renames: random edits match git" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    var prng: std.Random.DefaultPrng = .init(0x72656e616d65);
+    const rand = prng.random();
+    const words = [_][]const u8{ "alpha", "beta", "gamma", "delta", "x", "", "fn main() {}", "}", "    return 0;", "a much longer line that takes most of a piece on its own" };
+    const dirs = [_][]const u8{ "", "src/", "lib/", "src/deep/", "doc/" };
+    const bases = [_][]const u8{ "a.c", "b.c", "util.h", "readme", "main.zig", "x.txt", "y.txt" };
+
+    for (0..25) |round| {
+        try f.tmp.dir.deleteTree(io, "r");
+        _ = try f.run("", &.{ "init", "-q", "-b", "main", "r" });
+        // Files of random lines, some sharing content, some with CRLF or NUL.
+        var paths: std.ArrayList([]const u8) = .empty;
+        var contents: std.ArrayList([]const u8) = .empty;
+        for (0..rand.intRangeAtMost(usize, 4, 14)) |_| {
+            const p = try std.fmt.allocPrint(f.arena(), "{s}{s}", .{ dirs[rand.uintLessThan(usize, dirs.len)], bases[rand.uintLessThan(usize, bases.len)] });
+            var dup = false;
+            for (paths.items) |q| dup = dup or std.mem.eql(u8, p, q);
+            if (dup) continue;
+            var c: std.ArrayList(u8) = .empty;
+            if (contents.items.len > 0 and rand.uintLessThan(u8, 6) == 0) {
+                try c.appendSlice(f.arena(), contents.items[rand.uintLessThan(usize, contents.items.len)]);
+            } else for (0..rand.intRangeAtMost(usize, 0, 40)) |_| {
+                try c.appendSlice(f.arena(), words[rand.uintLessThan(usize, words.len)]);
+                if (rand.uintLessThan(u8, 10) == 0) try c.append(f.arena(), if (rand.boolean()) '\r' else 0);
+                try c.append(f.arena(), '\n');
+            }
+            f.write(try std.fmt.allocPrint(f.arena(), "r/{s}", .{p}), c.items) catch continue;
+            try paths.append(f.arena(), p);
+            try contents.append(f.arena(), c.items);
+        }
+        _ = try f.run("r", &.{ "add", "-A" });
+        _ = try f.run("r", &.{ "commit", "-qm", "base" });
+
+        // Delete files, re-add some elsewhere with edits, add new ones.
+        for (paths.items, contents.items) |p, c| {
+            if (rand.uintLessThan(u8, 3) == 0) continue;
+            try f.tmp.dir.deleteFile(io, try std.fmt.allocPrint(f.arena(), "r/{s}", .{p}));
+            if (rand.uintLessThan(u8, 4) == 0) continue;
+            var lines = std.mem.splitScalar(u8, c, '\n');
+            var out: std.ArrayList(u8) = .empty;
+            const keep = rand.uintLessThan(u8, 10);
+            while (lines.next()) |line| {
+                if (rand.uintLessThan(u8, 10) < keep) try out.appendSlice(f.arena(), line) else try out.appendSlice(f.arena(), words[rand.uintLessThan(usize, words.len)]);
+                try out.append(f.arena(), '\n');
+            }
+            const base = std.fs.path.basename(p);
+            const name = if (rand.boolean()) base else bases[rand.uintLessThan(usize, bases.len)];
+            const np = try std.fmt.allocPrint(f.arena(), "r/new/{s}{d}/{s}", .{ dirs[rand.uintLessThan(usize, dirs.len)], rand.uintLessThan(u8, 3), name });
+            f.write(np, out.items) catch {};
+        }
+        _ = try f.run("r", &.{ "add", "-A" });
+        const label = try std.fmt.allocPrint(f.arena(), "random renames {d}", .{round});
         try f.expectSame("r", label);
     }
 }

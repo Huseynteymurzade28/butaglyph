@@ -10,9 +10,10 @@
 //! Configuration is read from the repository and the user's global files
 //! (`~/.gitconfig`, `$XDG_CONFIG_HOME/git/config`, or `$GIT_CONFIG_GLOBAL`),
 //! not from the system file, and `[include]` is not followed.
-//! Rename detection is not done: a staged rename counts as two paths, as
-//! with `git status --no-renames`. Clean/smudge filters (autocrlf, LFS) are
-//! not applied when hashing.
+//! Staged renames are detected as git does (see rename.zig), following
+//! `status.renames`/`diff.renames` and `status.renameLimit`/`diff.renameLimit`;
+//! `copies` is taken as plain renames. Clean/smudge filters (autocrlf, LFS)
+//! are not applied when hashing.
 
 const std = @import("std");
 const Io = std.Io;
@@ -26,10 +27,14 @@ const odb_mod = @import("odb.zig");
 const GitConfig = @import("config.zig").Config;
 const ignore = @import("ignore.zig");
 const untracked_mod = @import("untracked.zig");
+const rename = @import("rename.zig");
 const builtin = @import("builtin");
 
 pub const Status = struct {
+    /// Staged changes other than renames.
     staged: u32 = 0,
+    /// Staged renames (each one a deleted and an added path).
+    renamed: u32 = 0,
     modified: u32 = 0,
     deleted: u32 = 0,
     conflicted: u32 = 0,
@@ -180,7 +185,7 @@ pub fn compute(io: Io, arena: Allocator, repo: Repo, opts: Options) !Status {
 
     var st: Status = .{};
     const head_tree: ?Oid = if (head) |h| (try object.parseCommit((try readKind(&odb, h, .commit)).data)).tree else null;
-    try compareHeadToIndex(&odb, arena, head_tree, loaded.index, &st);
+    try compareHeadToIndex(&odb, arena, head_tree, loaded.index, renameOptions(configs), &st);
     if (opts.worktree) try compareIndexToWorktree(io, repo, loaded, StatRules.load(configs), &st);
     if (opts.untracked) st.untracked = try countUntracked(io, arena, repo, loaded.index.entries, configs, opts);
     if (opts.ahead_behind) if (head) |h| {
@@ -192,6 +197,32 @@ pub fn compute(io: Io, arena: Allocator, repo: Repo, opts: Options) !Status {
         }
     };
     return st;
+}
+
+/// null when rename detection is off.
+fn renameOptions(configs: Configs) ?rename.Options {
+    var buf: [32]u8 = undefined;
+    const on = configs.get("status", null, "renames", &buf) orelse configs.get("diff", null, "renames", &buf);
+    if (on) |v| {
+        const copies = std.ascii.eqlIgnoreCase(v, "copies") or std.ascii.eqlIgnoreCase(v, "copy");
+        if (!copies and !(parseBool(v) orelse true)) return null;
+    }
+    const limit = configs.get("status", null, "renamelimit", &buf) orelse configs.get("diff", null, "renamelimit", &buf);
+    return .{ .limit = if (limit) |v| parseLimit(v) orelse rename.default_limit else rename.default_limit };
+}
+
+/// A git integer (with an optional k/m/g suffix); 0 or less is unlimited (0).
+fn parseLimit(v: []const u8) ?u32 {
+    if (v.len == 0) return null;
+    const unit: i64 = switch (std.ascii.toLower(v[v.len - 1])) {
+        'k' => 1024,
+        'm' => 1024 * 1024,
+        'g' => 1024 * 1024 * 1024,
+        else => 1,
+    };
+    const digits = if (unit == 1) v else v[0 .. v.len - 1];
+    const n = std.math.mul(i64, std.fmt.parseInt(i64, digits, 10) catch return null, unit) catch return null;
+    return if (n <= 0) 0 else std.math.cast(u32, n) orelse std.math.maxInt(u32);
 }
 
 fn loadConfig(io: Io, arena: Allocator, repo: Repo) !GitConfig {
@@ -315,6 +346,12 @@ const TreeWalk = struct {
     cursor: usize = 0,
     st: *Status,
     path: std.ArrayList(u8) = .empty,
+    /// Rename candidates, when renames are detected: paths deleted from
+    /// HEAD and paths added to the index.
+    changes: ?struct {
+        deleted: std.ArrayList(rename.File) = .empty,
+        added: std.ArrayList(rename.File) = .empty,
+    } = null,
 
     const WalkError = odb_mod.Error || object.ParseError;
 
@@ -327,7 +364,7 @@ const TreeWalk = struct {
             try w.path.appendSlice(w.arena, e.name);
             if (e.isTree()) {
                 try w.path.append(w.arena, '/');
-                w.flushBefore(w.path.items);
+                try w.flushBefore(w.path.items);
                 const sub = if (cache) |c| c.child(e.name) else null;
                 if (sub) |s| if (s.entry_count >= 0 and s.oid != null and s.oid.?.eql(e.oid)) {
                     // Cache tree says the index matches this subtree exactly.
@@ -336,20 +373,21 @@ const TreeWalk = struct {
                 };
                 try w.walk(e.oid, sub);
             } else {
-                w.flushBefore(w.path.items);
+                try w.flushBefore(w.path.items);
                 if (w.cursor < w.entries.len and std.mem.eql(u8, w.entries[w.cursor].path, w.path.items)) {
-                    w.matchPath(e);
+                    try w.consumePath(e);
                 } else {
                     w.st.staged += 1; // in HEAD, not in the index: staged deletion
+                    if (w.changes) |*c| try c.deleted.append(w.arena, .{ .path = try w.arena.dupe(u8, w.path.items), .mode = e.mode, .oid = e.oid });
                 }
             }
         }
     }
 
     /// Index entries sorting before `bound` are not in HEAD: staged additions.
-    fn flushBefore(w: *TreeWalk, bound: []const u8) void {
+    fn flushBefore(w: *TreeWalk, bound: []const u8) !void {
         while (w.cursor < w.entries.len and std.mem.order(u8, w.entries[w.cursor].path, bound) == .lt) {
-            w.consumePath(null);
+            try w.consumePath(null);
         }
     }
 
@@ -357,13 +395,9 @@ const TreeWalk = struct {
         while (w.cursor < w.entries.len and std.mem.startsWith(u8, w.entries[w.cursor].path, prefix)) w.cursor += 1;
     }
 
-    fn matchPath(w: *TreeWalk, head_entry: object.TreeEntry) void {
-        w.consumePath(head_entry);
-    }
-
     /// Consumes all index entries for the path at the cursor (one, or up to
     /// three conflict stages) and classifies it.
-    fn consumePath(w: *TreeWalk, head_entry: ?object.TreeEntry) void {
+    fn consumePath(w: *TreeWalk, head_entry: ?object.TreeEntry) !void {
         const first = &w.entries[w.cursor];
         var conflicted = false;
         while (w.cursor < w.entries.len and std.mem.eql(u8, w.entries[w.cursor].path, first.path)) : (w.cursor += 1) {
@@ -377,12 +411,23 @@ const TreeWalk = struct {
             if (h.mode != first.mode or !h.oid.eql(first.oid)) w.st.staged += 1;
         } else {
             w.st.staged += 1;
+            if (w.changes) |*c| try c.added.append(w.arena, .{ .path = first.path, .mode = first.mode, .oid = first.oid });
         }
     }
 };
 
-fn compareHeadToIndex(odb: *odb_mod.Odb, arena: Allocator, head_tree: ?Oid, index: index_mod.Index, st: *Status) !void {
+/// Reads blobs for rename detection.
+const Blobs = struct {
+    odb: *odb_mod.Odb,
+
+    pub fn read(b: Blobs, oid: Oid) ![]const u8 {
+        return (try readKind(b.odb, oid, .blob)).data;
+    }
+};
+
+fn compareHeadToIndex(odb: *odb_mod.Odb, arena: Allocator, head_tree: ?Oid, index: index_mod.Index, renames: ?rename.Options, st: *Status) !void {
     var w: TreeWalk = .{ .odb = odb, .arena = arena, .entries = index.entries, .st = st };
+    if (renames != null) w.changes = .{};
     if (head_tree) |t| {
         const root = if (index.tree) |*c| c else null;
         if (root) |r| if (r.entry_count >= 0 and r.oid != null and r.oid.?.eql(t)) {
@@ -392,7 +437,12 @@ fn compareHeadToIndex(odb: *odb_mod.Odb, arena: Allocator, head_tree: ?Oid, inde
         };
         try w.walk(t, root);
     }
-    while (w.cursor < w.entries.len) w.consumePath(null);
+    while (w.cursor < w.entries.len) try w.consumePath(null);
+    if (w.changes) |c| {
+        const n = try rename.count(arena, Blobs{ .odb = odb }, c.deleted.items, c.added.items, renames.?);
+        st.renamed = n;
+        st.staged -= 2 * n;
+    }
 }
 
 // ---------------------------------------------------------------- worktree
@@ -648,6 +698,13 @@ fn allStale(queue: anytype, nodes: *std.AutoHashMapUnmanaged(Oid, Node)) bool {
         if (nodes.get(item.oid).?.flags != 3) return false;
     }
     return true;
+}
+
+test parseLimit {
+    try std.testing.expectEqual(@as(?u32, 400), parseLimit("400"));
+    try std.testing.expectEqual(@as(?u32, 2048), parseLimit("2k"));
+    try std.testing.expectEqual(@as(?u32, 0), parseLimit("-1"));
+    try std.testing.expectEqual(@as(?u32, null), parseLimit("lots"));
 }
 
 test splitTime {

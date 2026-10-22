@@ -169,7 +169,7 @@ powerline chevron, with a Nerd Font). The root of an absolute path stays
 |--------------|---------------------------------------------------------------|--------------|
 | `dir`        | Working directory, with fish-style abbreviation of long paths (UTF-8 aware). Your home directory is shown whole (`/home/me/d/b/src`), or as `~` with `collapse_home`. Windows drives and UNC roots are kept whole | `collapse_home`, `home_symbol`, `separator`, `abbreviate`, `max_length`, `abbrev_len`, `full_dirs` |
 | `git_branch` | Branch from `.git/HEAD`, or the short hash when HEAD is detached. Works in subdirectories, worktrees and submodules (`.git` files with `gitdir:`) | `symbol`, `detached_symbol`, `hash_length`, `max_length`, `timeout_ms` |
-| `git_status` | Conflicted (`=`), staged (`+`), modified (`!`), deleted (`✘`) and untracked (`?`) paths, and commits ahead of (`⇡`) and behind (`⇣`) the upstream. Hidden when the tree is clean and in sync | `*_symbol`, `show_counts`, `untracked`, `ahead_behind`, `worktree`, `timeout_ms` |
+| `git_status` | Conflicted (`=`), staged (`+`), renamed (`»`), modified (`!`), deleted (`✘`) and untracked (`?`) paths, and commits ahead of (`⇡`) and behind (`⇣`) the upstream. Hidden when the tree is clean and in sync | `*_symbol`, `show_counts`, `untracked`, `ahead_behind`, `worktree`, `timeout_ms` |
 | `status`     | The last exit code, if non-zero. `130` is shown as `INT`, and so on | `symbol`, `signal_names` |
 | `duration`   | How long the last command ran, if longer than `min_ms`        | `symbol`, `min_ms` |
 | `jobs`       | Number of background jobs. Not in the default order           | `symbol`, `min`, `count_from` |

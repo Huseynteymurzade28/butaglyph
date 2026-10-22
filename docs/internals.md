@@ -118,7 +118,9 @@ that happens and the daemon's own executable has been replaced on disk
   Untracked files come from a walk of the work tree that never enters an
   ignored directory, with a port of git's `wildmatch` and its precedence
   rules (nested `.gitignore` files, `info/exclude`, `core.excludesFile`).
-  Ahead/behind uses git's date-ordered merge-base paint. The test suite
+  Staged renames are found with git's own similarity estimate and pairing
+  order (exact matches, then unique file names, then the best-scoring
+  pairs at 50% or more). Ahead/behind uses git's date-ordered merge-base paint. The test suite
   compares every result with the real `git status` and `git rev-list` on
   generated repositories (including random trees with random ignore rules),
   and checks that every object in loose, OFS-delta and REF-delta packs
@@ -167,6 +169,7 @@ src/
     ignore.zig       .gitignore rules and wildmatch
     untracked.zig    the work tree walk for untracked files
     status.zig       staged/modified/deleted/conflicted/untracked, ahead/behind
+    rename.zig       staged rename detection (git's diffcore-rename)
   modules/*.zig      one file per module
     lang.zig         what the language modules share: project detection
                      (directory listings read once), $PATH lookup, the
@@ -266,8 +269,6 @@ Planned work and known gaps are tracked in
 
 Known gaps:
 
-* rename detection is not done, so a rename counts as a deletion plus an
-  addition, as with `git status --no-renames`;
 * clean/smudge filters (autocrlf, LFS) are not applied when hashing (on
   Windows with `core.autocrlf`, a file whose stat data changed but whose
   content didn't may show as modified until git refreshes the index);

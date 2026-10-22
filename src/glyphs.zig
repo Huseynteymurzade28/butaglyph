@@ -8,6 +8,7 @@ pub const Glyphs = struct {
     git_branch: []const u8,
     git_detached: []const u8,
     git_staged: []const u8,
+    git_renamed: []const u8,
     git_modified: []const u8,
     git_deleted: []const u8,
     git_conflicted: []const u8,
@@ -46,6 +47,7 @@ pub const unicode: Glyphs = .{
     .git_branch = "\u{2387} ", // ⎇
     .git_detached = "\u{27a6} ", // ➦
     .git_staged = "+",
+    .git_renamed = "\u{00bb}", // »
     .git_modified = "!",
     .git_deleted = "\u{2718}", // ✘
     .git_conflicted = "=",
@@ -81,6 +83,7 @@ pub const nerd: Glyphs = .{
     .git_branch = "\u{e0a0} ", // nf-pl-branch
     .git_detached = "\u{f417} ", // nf-oct-git_commit
     .git_staged = "+",
+    .git_renamed = "\u{00bb}", // »
     .git_modified = "!",
     .git_deleted = "\u{2718}", // ✘
     .git_conflicted = "=",
@@ -116,6 +119,7 @@ pub const ascii: Glyphs = .{
     .git_branch = "git:",
     .git_detached = "git:@",
     .git_staged = "+",
+    .git_renamed = ">",
     .git_modified = "!",
     .git_deleted = "-",
     .git_conflicted = "=",

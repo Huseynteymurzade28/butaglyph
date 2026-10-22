@@ -1,5 +1,5 @@
-//! Repository status from butaglyph's own git reader: staged, modified,
-//! deleted, conflicted and untracked paths, and commits ahead of/behind the
+//! Repository status from butaglyph's own git reader: staged, renamed,
+//! modified, deleted, conflicted and untracked paths, and commits ahead of/behind the
 //! upstream. Hidden when there is nothing to report.
 
 const std = @import("std");
@@ -17,6 +17,7 @@ pub const scope: module.Scope = .repo;
 pub const Config = struct {
     style: render_mod.Style = .{ .fg = "red", .bold = true },
     staged_symbol: ?[]const u8 = null,
+    renamed_symbol: ?[]const u8 = null,
     modified_symbol: ?[]const u8 = null,
     deleted_symbol: ?[]const u8 = null,
     conflicted_symbol: ?[]const u8 = null,
@@ -48,7 +49,7 @@ pub fn compute(ctx: *const Context, cfg: *const Config, arena: std.mem.Allocator
     });
     const ahead = st.ahead orelse 0;
     const behind = st.behind orelse 0;
-    if (st.staged + st.modified + st.deleted + st.conflicted + st.untracked + ahead + behind == 0) return null;
+    if (st.staged + st.renamed + st.modified + st.deleted + st.conflicted + st.untracked + ahead + behind == 0) return null;
     return st;
 }
 
@@ -65,6 +66,7 @@ pub fn render(data: *const Data, cfg: *const Config, g: *const Glyphs, line: *Li
     const parts = [_]struct { u32, []const u8 }{
         .{ data.conflicted, cfg.conflicted_symbol orelse g.git_conflicted },
         .{ data.staged, cfg.staged_symbol orelse g.git_staged },
+        .{ data.renamed, cfg.renamed_symbol orelse g.git_renamed },
         .{ data.modified, cfg.modified_symbol orelse g.git_modified },
         .{ data.deleted, cfg.deleted_symbol orelse g.git_deleted },
         .{ data.untracked, cfg.untracked_symbol orelse g.git_untracked },
@@ -87,11 +89,11 @@ pub fn render(data: *const Data, cfg: *const Config, g: *const Glyphs, line: *Li
 test "git_status rendering" {
     const glyphs = @import("../glyphs.zig");
     var line: Line = .{};
-    try render(&.{ .staged = 2, .modified = 1, .ahead = 3, .behind = 0 }, &.{}, glyphs.get(.ascii), &line);
+    try render(&.{ .staged = 2, .renamed = 1, .modified = 1, .ahead = 3, .behind = 0 }, &.{}, glyphs.get(.ascii), &line);
     var text: std.ArrayList(u8) = .empty;
     defer text.deinit(std.testing.allocator);
     for (line.items()) |s| try text.appendSlice(std.testing.allocator, s.text);
-    try std.testing.expectEqualStrings("+2 !1 ^3", text.items);
+    try std.testing.expectEqualStrings("+2 >1 !1 ^3", text.items);
 
     line = .{};
     try render(&.{ .conflicted = 1, .deleted = 4, .untracked = 2 }, &.{ .show_counts = false }, glyphs.get(.ascii), &line);
