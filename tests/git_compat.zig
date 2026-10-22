@@ -517,7 +517,9 @@ test "config includes and the system config match git" {
     try testing.expectEqual(@as(u32, 0), (try f.ours("r")).untracked);
 
     // includeIf conditions, each one holding and failing.
+    // With `/` separators: in a pattern, `\\` escapes the next character.
     const root_r = try f.path("r");
+    std.mem.replaceScalar(u8, @constCast(root_r), '\\', '/');
     const conds = [_][]const u8{
         try std.fmt.allocPrint(f.arena(), "gitdir:{s}/", .{root_r}),
         try std.fmt.allocPrint(f.arena(), "gitdir:{s}/.git", .{root_r}),
