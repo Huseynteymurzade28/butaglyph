@@ -66,10 +66,10 @@ pub const fingerprint: u64 = blk: {
     for ([_]u64{ wire.fingerprint(Request), wire.fingerprint(Frame), wire.fingerprint(Status) }) |f| {
         h.update(std.mem.asBytes(&f));
     }
-    for (@typeInfo(module.Id).@"enum".fields) |f| {
-        const M = module.Impl(@enumFromInt(f.value));
+    for (module.ids) |id| {
+        const M = module.Impl(id);
         if (module.scopeOf(M) == .repo) {
-            h.update(f.name);
+            h.update(@tagName(id));
             h.update(std.mem.asBytes(&wire.fingerprint(M.Config)));
             h.update(std.mem.asBytes(&wire.fingerprint(M.Data)));
         }
@@ -139,7 +139,7 @@ test socketPath {
     try std.testing.expectEqual(null, socketPath(&buf, TestEnv{ .map = &.{ .{ "BUTA_SOCKET", "" }, .{ "XDG_RUNTIME_DIR", "/run/user/1" } } }));
     try std.testing.expectEqual(null, socketPath(&buf, TestEnv{ .map = &.{.{ "XDG_RUNTIME_DIR", "rel" }} }));
     try std.testing.expectEqual(null, socketPath(&buf, TestEnv{ .map = &.{} }));
-    const long = "/" ++ "x" ** 120;
+    const long = "/" ++ @as([120]u8, @splat('x'));
     try std.testing.expectEqual(null, socketPath(&buf, TestEnv{ .map = &.{.{ "BUTA_SOCKET", long }} }));
 }
 

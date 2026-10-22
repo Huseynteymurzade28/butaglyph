@@ -154,8 +154,9 @@ pub fn get(set: Set) *const Glyphs {
 }
 
 test "ascii set is 7-bit clean" {
-    inline for (@typeInfo(Glyphs).@"struct".fields) |f| if (f.type == []const u8) {
-        for (@field(ascii, f.name)) |c| try @import("std").testing.expect(c < 0x80);
+    const s = @typeInfo(Glyphs).@"struct";
+    inline for (s.field_names, s.field_types) |name, F| if (F == []const u8) {
+        for (@field(ascii, name)) |c| try @import("std").testing.expect(c < 0x80);
     };
 }
 
@@ -171,8 +172,9 @@ pub fn hasPrivateUse(s: []const u8) bool {
 }
 
 test "unicode set needs no special font" {
-    inline for (@typeInfo(Glyphs).@"struct".fields) |f| if (f.type == []const u8) {
-        try @import("std").testing.expect(!hasPrivateUse(@field(unicode, f.name)));
+    const s = @typeInfo(Glyphs).@"struct";
+    inline for (s.field_names, s.field_types) |name, F| if (F == []const u8) {
+        try @import("std").testing.expect(!hasPrivateUse(@field(unicode, name)));
     };
     try @import("std").testing.expect(hasPrivateUse(nerd.git_branch));
 }

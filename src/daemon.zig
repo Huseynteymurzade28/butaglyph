@@ -402,7 +402,7 @@ const State = struct {
             };
             if (gop.found_existing) {
                 gop.value_ptr.repos |= bit(i);
-                gop.value_ptr.kind = @enumFromInt(@max(@intFromEnum(gop.value_ptr.kind), @intFromEnum(t.kind)));
+                gop.value_ptr.kind = @fromBackingInt(@intCast(@max(@backingInt(gop.value_ptr.kind), @backingInt(t.kind))));
             } else {
                 gop.value_ptr.* = .{ .repos = bit(i), .kind = t.kind };
             }

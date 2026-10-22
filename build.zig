@@ -20,7 +20,7 @@ pub fn build(b: *std.Build) void {
     // zig build run -- prompt --shell bash ...
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| run_cmd.addArgs(args);
+    run_cmd.addPassthruArgs();
     b.step("run", "Run buta").dependOn(&run_cmd.step);
 
     // Unit tests live next to the code; integration tests drive the real binary.
@@ -90,7 +90,7 @@ pub fn build(b: *std.Build) void {
     });
     const run_bench = b.addRunArtifact(bench_exe);
     run_bench.addArtifactArg(fast_exe);
-    if (b.args) |args| run_bench.addArgs(args);
+    run_bench.addPassthruArgs();
     b.step("bench", "Benchmark `buta prompt` (ReleaseFast)").dependOn(&run_bench.step);
 }
 

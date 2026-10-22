@@ -23,12 +23,12 @@ pub fn encode(comptime T: type, value: *const T, w: *std.Io.Writer) std.Io.Write
         .void => {},
         .bool => try w.writeByte(@intFromBool(value.*)),
         .int => try w.writeInt(Wide(T), value.*, .little),
-        .@"enum" => |e| try encode(e.tag_type, &@intFromEnum(value.*), w),
+        .@"enum" => |e| try encode(e.tag_type, &@backingInt(value.*), w),
         .optional => |o| if (value.*) |*v| {
             try w.writeByte(1);
             try encode(o.child, v, w);
         } else try w.writeByte(0),
-        .@"struct" => |s| inline for (s.fields) |f| try encode(f.type, &@field(value.*, f.name), w),
+        .@"struct" => |s| inline for (s.field_names, s.field_types) |name, F| try encode(F, &@field(value.*, name), w),
         .@"union" => |u| {
             const Tag = u.tag_type orelse @compileError("wire: untagged union " ++ @typeName(T));
             try encode(Tag, &std.meta.activeTag(value.*), w);
@@ -74,7 +74,7 @@ pub fn decode(comptime T: type, r: *std.Io.Reader, arena: Allocator) DecodeError
         },
         .@"struct" => |s| {
             var value: T = undefined;
-            inline for (s.fields) |f| @field(value, f.name) = try decode(f.type, r, arena);
+            inline for (s.field_names, s.field_types) |name, F| @field(value, name) = try decode(F, r, arena);
             return value;
         },
         .@"union" => |u| {
@@ -123,7 +123,7 @@ fn takeByte(r: *std.Io.Reader) error{EndOfStream}!u8 {
 /// Integers travel at their size rounded up to whole bytes.
 fn Wide(comptime T: type) type {
     const info = @typeInfo(T).int;
-    return std.meta.Int(info.signedness, std.mem.alignForward(u16, info.bits, 8));
+    return @Int(info.signedness, std.mem.alignForward(u16, info.bits, 8));
 }
 
 /// A hash of `T`'s shape: two types with the same fingerprint encode the
@@ -143,24 +143,24 @@ fn shape(comptime T: type, h: *std.hash.Wyhash) void {
     h.update(@tagName(info));
     switch (info) {
         .void, .bool => {},
-        .int => |i| h.update(&.{ @intFromEnum(i.signedness), @truncate(i.bits), @truncate(i.bits >> 8) }),
+        .int => |i| h.update(&.{ @backingInt(i.signedness), @truncate(i.bits), @truncate(i.bits >> 8) }),
         .@"enum" => |e| {
             shape(e.tag_type, h);
-            for (e.fields) |f| {
-                h.update(f.name);
-                h.update(std.mem.asBytes(&@as(i64, f.value)));
+            for (e.field_names, e.field_values) |name, value| {
+                h.update(name);
+                h.update(std.mem.asBytes(&@as(i64, value)));
             }
         },
         .optional => |o| shape(o.child, h),
-        .@"struct" => |s| for (s.fields) |f| {
-            h.update(f.name);
-            shape(f.type, h);
+        .@"struct" => |s| for (s.field_names, s.field_types) |name, F| {
+            h.update(name);
+            shape(F, h);
         },
         .@"union" => |u| {
             shape(u.tag_type orelse @compileError("wire: untagged union " ++ @typeName(T)), h);
-            for (u.fields) |f| {
-                h.update(f.name);
-                shape(f.type, h);
+            for (u.field_names, u.field_types) |name, F| {
+                h.update(name);
+                shape(F, h);
             }
         },
         .array => |a| {

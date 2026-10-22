@@ -31,8 +31,8 @@ pub const Conn = struct {
         if (!protocol.supported) return false; // keeps the rest out of other builds
         if (cfg.daemon == .off) return false;
         var wanted = false;
-        inline for (@typeInfo(Id).@"enum".fields) |f| {
-            if (module.scopeOf(module.Impl(@enumFromInt(f.value))) == .repo and module.inOrder(cfg, @enumFromInt(f.value))) wanted = true;
+        inline for (module.ids) |id| {
+            if (module.scopeOf(module.Impl(id)) == .repo and module.inOrder(cfg, id)) wanted = true;
         }
         if (!wanted) return false;
 
@@ -61,14 +61,13 @@ pub const Conn = struct {
 
         var requests: [module.id_count]protocol.ModuleRequest = undefined;
         var n: usize = 0;
-        inline for (@typeInfo(Id).@"enum".fields) |f| {
-            const id: Id = @enumFromInt(f.value);
+        inline for (module.ids) |id| {
             if (module.scopeOf(module.Impl(id)) == .repo and module.inOrder(cfg, id)) {
                 var aw: Io.Writer.Allocating = .init(arena);
                 wire.encode(module.Impl(id).Config, module.configFor(id, cfg), &aw.writer) catch return false;
                 requests[n] = .{ .id = id, .config = aw.written() };
                 n += 1;
-                c.pending[f.value] = true;
+                c.pending[@backingInt(id)] = true;
             }
         }
         const request: protocol.Request = .{ .prompt = .{
@@ -102,12 +101,11 @@ pub const Conn = struct {
             }
             // Drop modules whose deadline has passed and find the nearest one left.
             var wait_ms: ?i64 = null;
-            inline for (@typeInfo(Id).@"enum".fields) |f| {
-                const id: Id = @enumFromInt(f.value);
-                if (module.Impl(id).cost == .expensive and c.pending[f.value]) {
+            inline for (module.ids) |id| {
+                if (module.Impl(id).cost == .expensive and c.pending[@backingInt(id)]) {
                     const left = module.deadlineFor(id, cfg, start).durationFromNow(ctx.io).raw.toMilliseconds();
                     if (left <= 0) {
-                        c.pending[f.value] = false;
+                        c.pending[@backingInt(id)] = false;
                         if (ctx.debug) std.debug.print("buta: module {s}: daemon missed the {d} ms deadline\n", .{ @tagName(id), module.timeoutFor(id, cfg) });
                     } else wait_ms = @min(wait_ms orelse left, left);
                 }
@@ -121,7 +119,7 @@ pub const Conn = struct {
         switch (frame.id) {
             inline else => |id| {
                 if (comptime module.scopeOf(module.Impl(id)) != .repo) return;
-                const i = @intFromEnum(id);
+                const i = @backingInt(id);
                 if (!c.pending[i]) return;
                 c.pending[i] = false;
                 // A frame that arrives after the deadline is dropped, exactly

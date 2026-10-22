@@ -143,7 +143,7 @@ pub const Odb = struct {
         const entry = try pack.entryHeader(offset);
         const obj: Object = switch (entry.type) {
             1...4 => .{
-                .kind = @enumFromInt(entry.type),
+                .kind = @fromBackingInt(@intCast(entry.type)),
                 .data = try odb.inflate(pack.data, entry.data_offset, entry.size),
             },
             6, 7 => blk: {

@@ -119,8 +119,8 @@ test parseCommit {
 }
 
 test TreeIterator {
-    const oid_a = [_]u8{0xaa} ** 20;
-    const oid_b = [_]u8{0xbb} ** 20;
+    const oid_a = @as([20]u8, @splat(0xaa));
+    const oid_b = @as([20]u8, @splat(0xbb));
     const data = "100644 a.txt\x00" ++ oid_a ++ "40000 dir\x00" ++ oid_b;
     var it: TreeIterator = .init(data);
     const e1 = (try it.next()).?;

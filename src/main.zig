@@ -388,5 +388,5 @@ test {
     _ = @import("wire.zig");
     _ = module;
     _ = render;
-    inline for (@typeInfo(module.impls).@"struct".decls) |d| _ = @field(module.impls, d.name);
+    inline for (@typeInfo(module.impls).@"struct".decl_names) |name| _ = @field(module.impls, name);
 }

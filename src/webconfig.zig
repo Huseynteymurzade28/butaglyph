@@ -192,7 +192,7 @@ fn handle(state: *State, arena: Allocator, request: *http.Server.Request) !bool 
         .parse => {
             const P = struct { zon: []const u8 };
             const p = try std.json.parseFromSliceLeaky(P, arena, body, .{ .ignore_unknown_fields = true });
-            const loaded = config.parse(arena, try arena.dupeZ(u8, p.zon), "config.zon");
+            const loaded = config.parse(arena, try arena.dupeSentinel(u8, p.zon, 0), "config.zon");
             if (loaded.problem) |msg| {
                 try respondJson(request, .ok, arena, .{ .@"error" = msg });
             } else try respondJson(request, .ok, arena, .{ .config = loaded.config });
@@ -268,9 +268,9 @@ fn respondState(state: *State, arena: Allocator, request: *http.Server.Request) 
     try writeSchema(config.Config, &jw);
     try jw.objectField("glyphs");
     try jw.beginObject();
-    inline for (@typeInfo(glyphs.Set).@"enum".fields) |f| {
-        try jw.objectField(f.name);
-        try jw.write(glyphs.get(@enumFromInt(f.value)).*);
+    inline for (comptime std.meta.tags(glyphs.Set)) |set| {
+        try jw.objectField(@tagName(set));
+        try jw.write(glyphs.get(set).*);
     }
     try jw.endObject();
     try jw.objectField("presets");
@@ -380,7 +380,7 @@ fn respondSave(state: *State, arena: Allocator, request: *http.Server.Request, b
     const cfg = try configFromJson(arena, body);
     const zon = try toZon(arena, cfg);
     // What is written must read back as the same config.
-    const check = config.parse(arena, try arena.dupeZ(u8, zon), state.path);
+    const check = config.parse(arena, try arena.dupeSentinel(u8, zon, 0), state.path);
     if (check.problem) |msg| return respondJson(request, .ok, arena, .{ .@"error" = msg });
 
     const io = state.io;
@@ -445,15 +445,15 @@ fn writeZon(w: *Io.Writer, comptime T: type, v: T, indent: usize) Io.Writer.Erro
         },
         .@"struct" => |s| {
             var any = false;
-            inline for (s.fields) |f| {
-                const value = @field(v, f.name);
-                const keep = if (f.defaultValue()) |d| !deepEql(f.type, value, d) else true;
+            inline for (s.field_names, s.field_types, s.field_attrs) |name, F, attrs| {
+                const value = @field(v, name);
+                const keep = if (attrs.defaultValue(F)) |d| !deepEql(F, value, d) else true;
                 if (keep) {
                     if (!any) try w.writeAll(".{\n");
                     any = true;
                     try w.splatByteAll(' ', (indent + 1) * 4);
-                    try w.print(".{f} = ", .{std.zig.fmtIdFlags(f.name, .{ .allow_primitive = true })});
-                    try writeZon(w, f.type, value, indent + 1);
+                    try w.print(".{f} = ", .{std.zig.fmtIdFlags(name, .{ .allow_primitive = true })});
+                    try writeZon(w, F, value, indent + 1);
                     try w.writeAll(",\n");
                 }
             }
@@ -498,7 +498,7 @@ fn deepEql(comptime T: type, a: T, b: T) bool {
             return true;
         },
         .@"struct" => |s| {
-            inline for (s.fields) |f| if (!deepEql(f.type, @field(a, f.name), @field(b, f.name))) return false;
+            inline for (s.field_names, s.field_types) |name, F| if (!deepEql(F, @field(a, name), @field(b, name))) return false;
             return true;
         },
         else => return a == b,
@@ -527,7 +527,7 @@ fn writeSchema(comptime T: type, jw: *std.json.Stringify) std.json.Stringify.Err
             try jw.write("enum");
             try jw.objectField("values");
             try jw.beginArray();
-            inline for (e.fields) |f| try jw.write(f.name);
+            inline for (e.field_names) |name| try jw.write(name);
             try jw.endArray();
         },
         .optional => |o| {
@@ -546,14 +546,14 @@ fn writeSchema(comptime T: type, jw: *std.json.Stringify) std.json.Stringify.Err
             try jw.write(T == @import("render.zig").Style);
             try jw.objectField("fields");
             try jw.beginArray();
-            inline for (s.fields) |f| {
+            inline for (s.field_names, s.field_types, s.field_attrs) |name, F, attrs| {
                 try jw.beginObject();
                 try jw.objectField("name");
-                try jw.write(f.name);
+                try jw.write(name);
                 try jw.objectField("required");
-                try jw.write(f.defaultValue() == null);
+                try jw.write(attrs.defaultValue(F) == null);
                 try jw.objectField("type");
-                try writeSchema(f.type, jw);
+                try writeSchema(F, jw);
                 try jw.endObject();
             }
             try jw.endArray();
@@ -573,7 +573,7 @@ test "toZon writes only what differs, and reads back the same" {
     for (presets.all) |p| {
         const original = config.parse(a, p.source, p.name).config;
         const zon = try toZon(a, original);
-        const back = config.parse(a, try a.dupeZ(u8, zon), p.name);
+        const back = config.parse(a, try a.dupeSentinel(u8, zon, 0), p.name);
         if (back.problem) |msg| {
             std.debug.print("{s}\n{s}\n", .{ msg, zon });
             return error.ZonDoesNotParse;
@@ -592,7 +592,7 @@ test "toZon writes only what differs, and reads back the same" {
     try std.testing.expect(std.mem.indexOf(u8, zon, ".open = \"\\u{e0b6}\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, zon, ".join = null") != null);
     try std.testing.expect(std.mem.indexOf(u8, zon, ".order = .{ .dir, .character }") != null);
-    const back = config.parse(a, try a.dupeZ(u8, zon), "t").config;
+    const back = config.parse(a, try a.dupeSentinel(u8, zon, 0), "t").config;
     try std.testing.expect(!back.dir.style.bold);
     try std.testing.expect(deepEql(config.Config, cfg, back));
 }

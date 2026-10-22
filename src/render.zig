@@ -219,10 +219,11 @@ pub const Style = struct {
     strikethrough: bool = false,
 
     pub fn eql(a: Style, b: Style) bool {
-        inline for (@typeInfo(Style).@"struct".fields) |f| {
-            const x = @field(a, f.name);
-            const y = @field(b, f.name);
-            if (f.type == bool) {
+        const s = @typeInfo(Style).@"struct";
+        inline for (s.field_names, s.field_types) |name, F| {
+            const x = @field(a, name);
+            const y = @field(b, name);
+            if (F == bool) {
                 if (x != y) return false;
             } else if (x == null or y == null) {
                 if (x != null or y != null) return false;

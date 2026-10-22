@@ -207,7 +207,7 @@ test "parse v2 and v3 entries with extended flags and a cache tree" {
     try testEntry(&buf, gpa, "a.txt", null, 3, null);
     try testEntry(&buf, gpa, "dir/b", 0x4000, 3, null);
     // TREE: root (2 entries, 1 subtree) + "dir" (1 entry, invalid -1 → no oid)
-    const tree_ext = "\x002 1\n" ++ ([_]u8{0x11} ** 20) ++ "dir\x00-1 0\n";
+    const tree_ext = "\x002 1\n" ++ @as([20]u8, @splat(0x11)) ++ "dir\x00-1 0\n";
     try buf.appendSlice(gpa, "TREE");
     var size: [4]u8 = undefined;
     std.mem.writeInt(u32, &size, tree_ext.len, .big);
@@ -249,6 +249,6 @@ test "rejects garbage and unsupported indexes" {
     defer arena_state.deinit();
     const a = arena_state.allocator();
     try std.testing.expectError(error.InvalidIndex, parse(a, "nope"));
-    try std.testing.expectError(error.UnsupportedIndex, parse(a, "DIRC\x00\x00\x00\x05\x00\x00\x00\x00" ++ [_]u8{0} ** 20));
-    try std.testing.expectError(error.InvalidIndex, parse(a, "DIRC\x00\x00\x00\x02\x00\x00\x00\x09" ++ [_]u8{0} ** 20));
+    try std.testing.expectError(error.UnsupportedIndex, parse(a, "DIRC\x00\x00\x00\x05\x00\x00\x00\x00" ++ @as([20]u8, @splat(0))));
+    try std.testing.expectError(error.InvalidIndex, parse(a, "DIRC\x00\x00\x00\x02\x00\x00\x00\x09" ++ @as([20]u8, @splat(0))));
 }

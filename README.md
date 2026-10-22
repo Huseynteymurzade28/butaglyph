@@ -31,7 +31,7 @@ weaves small glyphs into your prompt the same way.
 | Arch Linux | `yay -S butaglyph-bin` (prebuilt) or `yay -S butaglyph` (from source) |
 | Linux, macOS | Download `buta-*-linux` or `buta-*-macos` from [Releases](https://github.com/Huseynteymurzade28/butaglyph/releases), put `buta` in `~/.local/bin` |
 | Windows | See [Windows](#windows) below |
-| From source | `zig build -Doptimize=ReleaseFast` (Zig 0.16.0), then copy `zig-out/bin/buta` |
+| From source | `zig build -Doptimize=ReleaseFast` (Zig 0.17.0), then copy `zig-out/bin/buta` |
 
 Any font works: every preset and the default look use only standard
 Unicode. If you have a [Nerd Font](https://www.nerdfonts.com) and want

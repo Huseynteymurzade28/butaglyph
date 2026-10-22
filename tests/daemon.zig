@@ -416,7 +416,7 @@ test "the daemon hangs up on a client from another build" {
 fn sendForeignHello(path: []const u8) !bool {
     const fd = try connectTo(path);
     defer sys.close(fd);
-    const hello = "BUTA" ++ "\x00" ** 8 ++ "\x01\x00\x00\x00" ++ "\x00";
+    const hello = "BUTA" ++ @as([8]u8, @splat(0)) ++ "\x01\x00\x00\x00" ++ "\x00";
     if (!sys.writeAll(fd, hello)) return error.Write;
     var buf: [16]u8 = undefined;
     // No answer: EOF, or a reset because the daemon closed with our bytes unread.

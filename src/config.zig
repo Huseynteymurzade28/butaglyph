@@ -113,18 +113,20 @@ pub fn parse(arena: Allocator, raw: [:0]const u8, file_path: []const u8) LoadRes
         .config = .{},
         .problem = std.fmt.allocPrint(arena, "{s}: not valid UTF-16", .{file_path}) catch "config: bad encoding",
     };
-    var diag: std.zon.parse.Diagnostics = .{};
+    var diag: std.zon.parse.Diagnostics = undefined;
     // The ZON parser unrolls a loop per Config field at compile time.
     @setEvalBranchQuota(4000);
-    const cfg = std.zon.parse.fromSliceAlloc(Config, arena, source, &diag, .{ .free_on_error = false }) catch |err| {
+    const cfg = std.zon.parse.fromSlice(Config, .{
+        .gpa = arena,
+        .arena = arena,
+        .source = source,
+        .diagnostics = &diag,
+    }) catch |err| {
         const msg = switch (err) {
-            error.OutOfMemory => "out of memory",
-            error.ParseZon => std.fmt.allocPrint(arena, "{f}", .{diag}) catch "parse error",
+            error.OutOfMemory => std.fmt.allocPrint(arena, "{s}: out of memory", .{file_path}) catch "config: out of memory",
+            error.ParseZon => std.fmt.allocPrint(arena, "{f}", .{diag.fmt(file_path)}) catch "config: parse error",
         };
-        return .{
-            .config = .{},
-            .problem = std.fmt.allocPrint(arena, "{s}:{s}", .{ file_path, std.mem.trimEnd(u8, msg, "\n") }) catch "config: parse error",
-        };
+        return .{ .config = .{}, .problem = std.mem.trimEnd(u8, msg, "\n") };
     };
     return .{ .config = cfg };
 }
@@ -213,7 +215,7 @@ test "configs saved with a BOM or as UTF-16 (Windows) are read" {
     try utf16.appendSlice(a, "\xFF\xFE");
     const units = try std.unicode.utf8ToUtf16LeAlloc(a, text);
     for (units) |u| try utf16.appendSlice(a, &std.mem.toBytes(std.mem.nativeToLittle(u16, u)));
-    const r = parse(a, try a.dupeZ(u8, utf16.items), "t.zon");
+    const r = parse(a, try a.dupeSentinel(u8, utf16.items, 0), "t.zon");
     try std.testing.expectEqual(@as(?[]const u8, null), r.problem);
     try std.testing.expectEqualStrings("❧", r.config.separator);
 }

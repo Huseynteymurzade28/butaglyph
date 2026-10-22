@@ -163,28 +163,28 @@ pub const Data = union(Id) {
     user: impls.user.Data,
 };
 
-pub const id_count = @typeInfo(Id).@"enum".fields.len;
+pub const ids = std.meta.tags(Id);
+pub const id_count = ids.len;
 
 /// One slot per module id; null means "render nothing".
 pub const Slots = [id_count]?Data;
 
 // Compile-time check that every module implements the interface.
 comptime {
-    for (@typeInfo(Id).@"enum".fields) |f| {
-        const id: Id = @enumFromInt(f.value);
+    for (ids) |id| {
         const M = Impl(id);
         for ([_][]const u8{ "id", "cost", "Config", "Data", "compute", "render" }) |decl| {
-            if (!@hasDecl(M, decl)) @compileError("module '" ++ f.name ++ "' is missing `" ++ decl ++ "`");
+            if (!@hasDecl(M, decl)) @compileError("module '" ++ @tagName(id) ++ "' is missing `" ++ decl ++ "`");
         }
-        if (M.id != id) @compileError("module '" ++ f.name ++ "' declares the wrong id");
-        if (@TypeOf(M.cost) != Cost) @compileError("module '" ++ f.name ++ "': cost must be a Cost");
-        if (!@hasField(Config, f.name)) @compileError("Config has no section for module '" ++ f.name ++ "'");
+        if (M.id != id) @compileError("module '" ++ @tagName(id) ++ "' declares the wrong id");
+        if (@TypeOf(M.cost) != Cost) @compileError("module '" ++ @tagName(id) ++ "': cost must be a Cost");
+        if (!@hasField(Config, @tagName(id))) @compileError("Config has no section for module '" ++ @tagName(id) ++ "'");
         if (M.cost == .expensive and !@hasField(M.Config, "timeout_ms"))
-            @compileError("expensive module '" ++ f.name ++ "' needs `timeout_ms: ?u32 = null` in its Config");
+            @compileError("expensive module '" ++ @tagName(id) ++ "' needs `timeout_ms: ?u32 = null` in its Config");
         if (scopeOf(M) != .local and M.cost != .expensive)
-            @compileError("module '" ++ f.name ++ "': only expensive modules can have a scope");
+            @compileError("module '" ++ @tagName(id) ++ "': only expensive modules can have a scope");
         if (@hasDecl(M, "batch") and (M.cost != .expensive or scopeOf(M) != .local))
-            @compileError("module '" ++ f.name ++ "': only local expensive modules can be batched");
+            @compileError("module '" ++ @tagName(id) ++ "': only local expensive modules can be batched");
     }
 }
 
@@ -236,38 +236,34 @@ pub fn computeAll(ctx: *const Context, cfg: *const Config, rt: *Runtime, slots: 
     const asked = conn.open(ctx, cfg);
 
     // Launch the other expensive modules so they overlap with everything else.
-    inline for (@typeInfo(Id).@"enum".fields) |f| {
-        const id: Id = @enumFromInt(f.value);
-        if (Impl(id).cost == .expensive and !batched(Impl(id)) and inOrder(cfg, id) and !conn.pending[f.value]) {
+    inline for (ids) |id| {
+        if (Impl(id).cost == .expensive and !batched(Impl(id)) and inOrder(cfg, id) and !conn.pending[@backingInt(id)]) {
             launch(id, ctx, cfg, rt, slots, &launched);
         }
     }
     launchBatch(ctx, cfg, rt, slots, &launched);
 
-    inline for (@typeInfo(Id).@"enum".fields) |f| {
-        const id: Id = @enumFromInt(f.value);
+    inline for (ids) |id| {
         if (Impl(id).cost == .cheap and inOrder(cfg, id)) {
-            var fba: std.heap.FixedBufferAllocator = .init(&rt.heaps[f.value]);
-            slots[f.value] = computeOne(id, ctx, configFor(id, cfg), fba.allocator());
+            var fba: std.heap.FixedBufferAllocator = .init(&rt.heaps[@backingInt(id)]);
+            slots[@backingInt(id)] = computeOne(id, ctx, configFor(id, cfg), fba.allocator());
         }
     }
 
     if (asked) {
         conn.collect(ctx, cfg, start, rt, slots);
         // What the daemon left unanswered (it hung up early) is computed here.
-        inline for (@typeInfo(Id).@"enum".fields) |f| {
-            const id: Id = @enumFromInt(f.value);
-            if (Impl(id).cost == .expensive and conn.pending[f.value]) launch(id, ctx, cfg, rt, slots, &launched);
+        inline for (ids) |id| {
+            if (Impl(id).cost == .expensive and conn.pending[@backingInt(id)]) launch(id, ctx, cfg, rt, slots, &launched);
         }
     }
 
-    inline for (@typeInfo(Id).@"enum".fields) |f| {
-        const id: Id = @enumFromInt(f.value);
+    inline for (ids) |id| {
         if (Impl(id).cost == .expensive) {
-            if (launched[f.value]) {
-                const job = &rt.jobs[f.value];
+            if (launched[@backingInt(id)]) {
+                const job = &rt.jobs[@backingInt(id)];
                 if (waitUntil(ctx.io, &job.done, deadlineFor(id, cfg, start))) {
-                    slots[f.value] = job.result;
+                    slots[@backingInt(id)] = job.result;
                 } else if (ctx.debug) {
                     std.debug.print("buta: module {s}: missed its {d} ms deadline\n", .{ @tagName(id), timeoutFor(id, cfg) });
                 }
@@ -277,43 +273,42 @@ pub fn computeAll(ctx: *const Context, cfg: *const Config, rt: *Runtime, slots: 
 }
 
 fn launch(comptime id: Id, ctx: *const Context, cfg: *const Config, rt: *Runtime, slots: *Slots, launched: *[id_count]bool) void {
-    const job = &rt.jobs[@intFromEnum(id)];
+    const job = &rt.jobs[@backingInt(id)];
     const args = .{ job, ctx, cfg };
     if (ctx.io.concurrent(Task(id).run, args)) |_| {
-        launched[@intFromEnum(id)] = true;
+        launched[@backingInt(id)] = true;
     } else |_| {
         // No concurrency available (e.g. thread spawn failed): run inline, without a deadline.
         @call(.auto, Task(id).run, args);
-        slots[@intFromEnum(id)] = job.result;
+        slots[@backingInt(id)] = job.result;
     }
 }
 
 /// Starts the batched modules in `cfg.order` on one worker thread.
 fn launchBatch(ctx: *const Context, cfg: *const Config, rt: *Runtime, slots: *Slots, launched: *[id_count]bool) void {
     var any = false;
-    inline for (@typeInfo(Id).@"enum".fields) |f| {
-        if (batched(Impl(@enumFromInt(f.value))) and inOrder(cfg, @enumFromInt(f.value))) any = true;
+    inline for (ids) |id| {
+        if (batched(Impl(id)) and inOrder(cfg, id)) any = true;
     }
     if (!any) return;
     const args = .{ rt, ctx, cfg };
     if (ctx.io.concurrent(BatchTask.run, args)) |_| {
-        inline for (@typeInfo(Id).@"enum".fields) |f| {
-            if (batched(Impl(@enumFromInt(f.value))) and inOrder(cfg, @enumFromInt(f.value))) launched[f.value] = true;
+        inline for (ids) |id| {
+            if (batched(Impl(id)) and inOrder(cfg, id)) launched[@backingInt(id)] = true;
         }
     } else |_| {
         @call(.auto, BatchTask.run, args);
-        inline for (@typeInfo(Id).@"enum".fields) |f| {
-            if (batched(Impl(@enumFromInt(f.value)))) slots[f.value] = rt.jobs[f.value].result;
+        inline for (ids) |id| {
+            if (batched(Impl(id))) slots[@backingInt(id)] = rt.jobs[@backingInt(id)].result;
         }
     }
 }
 
 const BatchTask = struct {
     fn run(rt: *Runtime, ctx: *const Context, cfg: *const Config) void {
-        inline for (@typeInfo(Id).@"enum".fields) |f| {
-            const id: Id = @enumFromInt(f.value);
+        inline for (ids) |id| {
             if (comptime batched(Impl(id))) {
-                if (inOrder(cfg, id)) Task(id).run(&rt.jobs[f.value], ctx, cfg);
+                if (inOrder(cfg, id)) Task(id).run(&rt.jobs[@backingInt(id)], ctx, cfg);
             }
         }
     }
@@ -374,7 +369,7 @@ pub fn renderOne(data: *const Data, cfg: *const Config, g: *const Glyphs, line: 
 pub fn renderAll(slots: *const Slots, cfg: *const Config, g: *const Glyphs, line: *Line) void {
     var w: Weaver = .{ .cfg = cfg, .line = line };
     for (cfg.order) |id| {
-        const data = &(slots[@intFromEnum(id)] orelse continue);
+        const data = &(slots[@backingInt(id)] orelse continue);
         if (id == .line_break) {
             w.endLine() catch return;
             line.newline() catch return;
@@ -481,10 +476,10 @@ test "renderAll skips empty and hidden modules and joins with separator" {
     var cfg: Config = .{};
     cfg.order = &.{ .dir, .status, .duration, .line_break, .character };
     var slots: Slots = @splat(null);
-    slots[@intFromEnum(Id.dir)] = .{ .dir = .{ .path = "/tmp", .home_relative = false } };
-    slots[@intFromEnum(Id.duration)] = .{ .duration = .{ .ms = 2500 } };
-    slots[@intFromEnum(Id.line_break)] = .{ .line_break = .{} };
-    slots[@intFromEnum(Id.character)] = .{ .character = .{ .success = true } };
+    slots[@backingInt(Id.dir)] = .{ .dir = .{ .path = "/tmp", .home_relative = false } };
+    slots[@backingInt(Id.duration)] = .{ .duration = .{ .ms = 2500 } };
+    slots[@backingInt(Id.line_break)] = .{ .line_break = .{} };
+    slots[@backingInt(Id.character)] = .{ .character = .{ .success = true } };
     var line: Line = .{};
     renderAll(&slots, &cfg, @import("glyphs.zig").get(.ascii), &line);
     var buf: [256]u8 = undefined;
@@ -514,11 +509,11 @@ test "segments join modules that have a background" {
     cfg.dir.style = .{ .fg = "black", .bg = "blue" };
     cfg.duration.style = .{ .bg = "#ff0000>#00ff00" };
     var slots: Slots = @splat(null);
-    slots[@intFromEnum(Id.dir)] = .{ .dir = .{ .path = "/tmp", .home_relative = false } };
-    slots[@intFromEnum(Id.status)] = .{ .status = .{ .code = 1 } };
-    slots[@intFromEnum(Id.duration)] = .{ .duration = .{ .ms = 2500 } };
-    slots[@intFromEnum(Id.line_break)] = .{ .line_break = .{} };
-    slots[@intFromEnum(Id.character)] = .{ .character = .{ .success = true } };
+    slots[@backingInt(Id.dir)] = .{ .dir = .{ .path = "/tmp", .home_relative = false } };
+    slots[@backingInt(Id.status)] = .{ .status = .{ .code = 1 } };
+    slots[@backingInt(Id.duration)] = .{ .duration = .{ .ms = 2500 } };
+    slots[@backingInt(Id.line_break)] = .{ .line_break = .{} };
+    slots[@backingInt(Id.character)] = .{ .character = .{ .success = true } };
     var line: Line = .{};
     renderAll(&slots, &cfg, @import("glyphs.zig").get(.ascii), &line);
 
@@ -543,8 +538,8 @@ test "adjacent segments share one joint" {
     cfg.dir.style = .{ .bg = "blue" };
     cfg.duration.style = .{ .bg = "red" };
     var slots: Slots = @splat(null);
-    slots[@intFromEnum(Id.dir)] = .{ .dir = .{ .path = "/tmp", .home_relative = false } };
-    slots[@intFromEnum(Id.duration)] = .{ .duration = .{ .ms = 2500 } };
+    slots[@backingInt(Id.dir)] = .{ .dir = .{ .path = "/tmp", .home_relative = false } };
+    slots[@backingInt(Id.duration)] = .{ .duration = .{ .ms = 2500 } };
     var line: Line = .{};
     renderAll(&slots, &cfg, @import("glyphs.zig").get(.ascii), &line);
     var joint: ?Line.Span = null;
@@ -566,8 +561,8 @@ test "without a join, every segment is its own pill" {
     cfg.dir.style = .{ .bg = "blue" };
     cfg.duration.style = .{ .bg = "red" };
     var slots: Slots = @splat(null);
-    slots[@intFromEnum(Id.dir)] = .{ .dir = .{ .path = "/tmp", .home_relative = false } };
-    slots[@intFromEnum(Id.duration)] = .{ .duration = .{ .ms = 2500 } };
+    slots[@backingInt(Id.dir)] = .{ .dir = .{ .path = "/tmp", .home_relative = false } };
+    slots[@backingInt(Id.duration)] = .{ .duration = .{ .ms = 2500 } };
     var line: Line = .{};
     renderAll(&slots, &cfg, @import("glyphs.zig").get(.ascii), &line);
     var text: std.ArrayList(u8) = .empty;
